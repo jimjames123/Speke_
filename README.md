@@ -33,9 +33,34 @@ The app opens on a login screen. Two demo accounts (password **`spa123`**):
 | Area | Modules |
 |------|---------|
 | Operations | Dashboard · Appointments · Clients |
-| Finance | Billing & Payments · Inventory · Reports & Ledgers |
+| Finance | Billing & Payments · **Taxes & EFRIS** · Inventory · Reports & Ledgers |
 | Growth | Marketing · Analytics |
+| Group | **Branch Performance** |
 | Facilities | Staff Management · Gym & Health Club |
+
+### Taxes & EFRIS (admin)
+
+Tax overview tied to every transaction, modelled on Uganda's URA **EFRIS**
+(Electronic Fiscal Receipting & Invoicing) with the standard **18% VAT**:
+
+- KPIs — gross sales, VAT collected, net revenue, and EFRIS invoices issued today.
+- EFRIS fiscal-receipt ledger — each transaction with gross / net / VAT, a
+  Fiscal Document Number (FDN) and fiscalisation status.
+- EFRIS device panel — TIN, taxpayer, device status, and fiscalised / queued /
+  failed counts.
+- Tax breakdown and **accumulated VAT** across daily, weekly, monthly, quarterly
+  and annual periods. New bookings feed straight into these totals.
+
+### Branch Performance (admin)
+
+Group-wide view of all three branches (Wampewo · Munyonyo · Bukoto):
+
+- A period switch — **Daily / Weekly / Monthly / Quarterly / Annually**.
+- Group revenue, top branch, group VAT and branch count for the chosen period.
+- A revenue-by-branch comparison chart and a league table with each branch's
+  revenue, share of group, activity and trend vs the previous period.
+
+Both admin modules are visible to the **Manager** role only.
 
 **Working features** (persisted in the browser via `localStorage`)
 - **Login / logout** with role-based module access (see above).
