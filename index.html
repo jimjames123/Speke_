@@ -42,30 +42,40 @@ const LS = {
   del(k){ try { localStorage.removeItem(k); } catch(e){} },
 };
 const clone = (o) => JSON.parse(JSON.stringify(o));
-const DB_KEY = 'calabash_db_v1';
+const DB_KEY = 'calabash_db_v1';        // legacy single-tenant store (migrated on first load)
 const SESSION_KEY = 'calabash_session_v1';
+const SAAS_KEY = 'calabash_saas_v1';    // multi-tenant registry
 
 /* ------------------------------ auth --------------------------------- */
-// Demo accounts — client-side only, NOT real security.
-const USERS = [
-  { user: 'lucy',     pass: 'spa123', name: 'Lucy Mitambo',  role: 'manager',      title: 'Health Club Manager', initials: 'LM' },
-  { user: 'beatrice', pass: 'spa123', name: 'Beatrice N.',   role: 'receptionist', title: 'Receptionist',        initials: 'BE' },
-];
+// Platform (SaaS operator) super-admin — demo only, NOT real security.
+const PLATFORM = { user: 'owner', pass: 'platform', name: 'Platform Admin' };
 const ALL_MODULES = ['dashboard','appointments','clients','billing','taxes','inventory','reports','marketing','analytics','branches','staff','gym'];
 const ROLE_MODULES = {
   manager: ALL_MODULES,
   // Receptionists don't see Finance (billing, taxes, reports), Growth (marketing, analytics) or Group (branches).
   receptionist: ['dashboard','appointments','clients','inventory','staff','gym'],
 };
-const allowed = (m) => S.session && ROLE_MODULES[S.session.role].includes(m);
+// Modules that require the tenant to actually offer a given service.
+const SERVICE_OF = { gym: 'gym' };
+const allowed = (m) => {
+  const s = S.session;
+  if (!s || !s.tenantId || !ROLE_MODULES[s.role]) return false;
+  if (!ROLE_MODULES[s.role].includes(m)) return false;
+  const need = SERVICE_OF[m];
+  if (need && T && !T.services.includes(need)) return false;
+  return true;
+};
 
 /* ---------------------------- STATE ---------------------------------- */
 const S = {
   session: LS.get(SESSION_KEY, null),
+  route: 'landing',        // when signed out: landing | signin | onboard
+  authError: '',
+  onboard: null,           // onboarding wizard working state
   loginError: '',
   device: 'desktop',
   activeModule: 'dashboard',
-  branch: 'Wampewo',
+  branch: '',
   clientView: null,
   clientSearch: '',
   branchPeriod: 'daily',
@@ -86,7 +96,7 @@ const initials = (name) => { const p = String(name).trim().split(/\s+/); return 
 const priceNum = (s) => Number(String(s).replace(/[^0-9]/g,'')) || 0;
 
 /* --------------------------- STATIC DATA ----------------------------- */
-const BRANCHES = ['Wampewo','Munyonyo','Bukoto'];
+let BRANCHES = [];  // set from the active tenant at render time
 const NAV = {
   Operations: [['dashboard','Dashboard'],['appointments','Appointments'],['clients','Clients']],
   Finance:    [['billing','Billing & Payments'],['taxes','Taxes & EFRIS'],['inventory','Inventory'],['reports','Reports & Ledgers']],
@@ -296,46 +306,92 @@ const BK_PAYMENTS = ['Mobile Money','Credit / Debit Card','Pesapal','Digital Wal
 const BK_STEP_LABELS = ['Package','Date & Time','Therapist & Room','Client','Confirm'];
 const TIERS = ['New','Silver','Gold','Platinum'];
 
-/* ------------------------------ THE DB ------------------------------- */
-// Mutable, persisted store. Seeded on first run.
-let DB = LS.get(DB_KEY, null);
-if (!DB || !Array.isArray(DB.clients)) DB = seedDB();
-function seedDB(){ const db = { clients: clone(CLIENTS_SEED), newBookings: [] }; LS.set(DB_KEY, db); return db; }
-function saveDB(){ LS.set(DB_KEY, DB); }
-function resetDB(){ DB = seedDB(); }
+/* ============================ MULTI-TENANT ============================ */
+// The SaaS registry holds every onboarded business (tenant). Each tenant owns
+// its identity, enabled services, branches, users and its own operational data.
+function makeDemoTenant(){
+  const old = LS.get(DB_KEY, null);   // migrate the old single-tenant store, if any
+  const data = (old && Array.isArray(old.clients))
+    ? { clients: old.clients, newBookings: old.newBookings || [], seedCount: old.clients.length }
+    : { clients: clone(CLIENTS_SEED), newBookings: [], seedCount: CLIENTS_SEED.length };
+  return {
+    id: 'calabash', name: 'The Calabash', type: 'Wellness Club', brandLetter: 'C', demo: true,
+    services: ['spa','salon','gym'], branches: ['Wampewo','Munyonyo','Bukoto'],
+    tin: '1002458973', legalName: 'Calabash Wellness Ltd',
+    baseline: { revenue: 4240000, appts: 38, receipts: 42, newClients: 6, occupancy: '74%', clientTotal: 1284, loyalty: 312 },
+    branchFigures: {
+      Wampewo:  { weekly:27600000, monthly:118500000, quarterly:342000000, annually:1324000000, members:214, trend:12 },
+      Munyonyo: { daily:5120000, weekly:33800000, monthly:141200000, quarterly:402500000, annually:1548000000, appts:47, members:268, trend:9 },
+      Bukoto:   { daily:2980000, weekly:19400000, monthly:82600000, quarterly:236800000, annually:912000000, appts:29, members:154, trend:-3 },
+    },
+    users: [
+      { user:'lucy', pass:'spa123', name:'Lucy Mitambo', role:'manager', title:'Health Club Manager', initials:'LM' },
+      { user:'beatrice', pass:'spa123', name:'Beatrice N.', role:'receptionist', title:'Receptionist', initials:'BE' },
+    ],
+    data,
+  };
+}
+let REG = LS.get(SAAS_KEY, null);
+if (!REG || !Array.isArray(REG.tenants) || !REG.tenants.length){ REG = { tenants: [ makeDemoTenant() ] }; LS.set(SAAS_KEY, REG); }
+function saveReg(){ LS.set(SAAS_KEY, REG); }
+function tenantById(id){ return REG.tenants.find(t => t.id === id); }
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'biz';
 
-// ---- derived (live) values ----
-const addedClients = () => DB.clients.length - CLIENTS_SEED.length;
-const revenueTotal = () => 4240000 + DB.newBookings.reduce((s,b)=>s+b.amt,0);
-const apptCount = () => 38 + DB.newBookings.length;
-const receiptsCount = () => 42 + DB.newBookings.length;
+// ---- active context (set by loadContext before each app render) ----
+let T = null;         // current tenant
+let DB = null;        // current tenant's data (clients, bookings)
+function loadContext(){
+  if (S.session && S.session.tenantId){
+    T = tenantById(S.session.tenantId) || null;
+    if (T){
+      DB = T.data;
+      BRANCHES = T.branches;
+      if (!BRANCHES.includes(S.branch)) S.branch = BRANCHES[0] || '';
+    }
+  }
+}
+function saveDB(){ saveReg(); }
+function resetDB(){ if (T){ T.data = { clients: clone(T.demo ? CLIENTS_SEED : []), newBookings: [], seedCount: T.demo ? CLIENTS_SEED.length : 0 }; DB = T.data; saveReg(); } }
+
+// ---- derived (live) values, per active tenant ----
+const base = () => (T && T.baseline) ? T.baseline : { revenue:0, appts:0, receipts:0, newClients:0, occupancy:'—', clientTotal:0, loyalty:0 };
+const addedClients = () => DB.clients.length - (DB.seedCount || 0);
+const revenueTotal = () => base().revenue + DB.newBookings.reduce((s,b)=>s+b.amt,0);
+const apptCount = () => base().appts + DB.newBookings.length;
+const receiptsCount = () => base().receipts + DB.newBookings.length;
 function scheduleLive(){
-  return DB.newBookings.map(b => ({ time:b.time, guest:b.guest, treatment:b.treatment, room:b.room, therapist:b.therapist, dot:'#6a8168' })).concat(TODAY);
+  const seed = (T && T.demo) ? TODAY : [];
+  return DB.newBookings.map(b => ({ time:b.time, guest:b.guest, treatment:b.treatment, room:b.room, therapist:b.therapist, dot:'#6a8168' })).concat(seed);
 }
 function salesLive(){
-  return DB.newBookings.map(b => ({ guest:b.guest, treatment:b.treatment, amount:b.amount, receipt:b.receipt, room:b.room, tin:b.tin, tout:b.tout, therapist:b.therapist })).concat(SALES);
+  const seed = (T && T.demo) ? SALES : [];
+  return DB.newBookings.map(b => ({ guest:b.guest, treatment:b.treatment, amount:b.amount, receipt:b.receipt, room:b.room, tin:b.tin, tout:b.tout, therapist:b.therapist })).concat(seed);
 }
 
 // ---- tax / EFRIS (Uganda URA) ----
-// Prices are VAT-inclusive at the standard 18% rate.
 const VAT_RATE = 0.18;
 const vatIncl = (gross) => Math.round(gross * 18 / 118);   // VAT portion of a tax-inclusive price
 const netIncl = (gross) => gross - vatIncl(gross);          // net (VAT-exclusive) portion
-const BIZ = { tin: '1002458973', name: 'Calabash Wellness Ltd', device: 'EFRIS-TZ10-0447' };
+function biz(){ return { tin: (T && T.tin) || '—', name: (T && (T.legalName || T.name)) || '—', device: 'EFRIS-TZ10-0447' }; }
 function txns(){
+  const seed = (T && T.demo) ? SALES.map(s => ({ guest:s.guest, treatment:s.treatment, gross:priceNum(s.amount), receipt:s.receipt, fresh:false })) : [];
   const nb = DB.newBookings.map(b => ({ guest:b.guest, treatment:b.treatment, gross:b.amt, receipt:b.receipt, fresh:true }));
-  const seed = SALES.map(s => ({ guest:s.guest, treatment:s.treatment, gross:priceNum(s.amount), receipt:s.receipt, fresh:false }));
   return nb.concat(seed);
 }
 
-// ---- branch performance (group / all branches) ----
-// Wampewo's daily figure tracks live bookings; other branches are illustrative.
+// ---- branch performance (all branches of the active tenant) ----
 function branchData(){
-  return [
-    { name:'Wampewo',  daily: revenueTotal(), weekly: 27600000, monthly: 118500000, quarterly: 342000000, annually: 1324000000, appts: apptCount(), members: 214, trend: 12 },
-    { name:'Munyonyo', daily: 5120000,        weekly: 33800000, monthly: 141200000, quarterly: 402500000, annually: 1548000000, appts: 47,          members: 268, trend: 9  },
-    { name:'Bukoto',   daily: 2980000,        weekly: 19400000, monthly: 82600000,  quarterly: 236800000, annually: 912000000,  appts: 29,          members: 154, trend: -3 },
-  ];
+  const per = T ? (T.branchFigures || {}) : {};
+  return BRANCHES.map((name, i) => {
+    const f = per[name];
+    if (f){
+      const row = Object.assign({ name, daily:0, weekly:0, monthly:0, quarterly:0, annually:0, appts:0, members:0, trend:0 }, f);
+      if (i === 0){ row.daily = revenueTotal(); row.appts = apptCount(); }
+      return row;
+    }
+    const daily = i === 0 ? revenueTotal() : 0;
+    return { name, daily, weekly:daily*6, monthly:daily*26, quarterly:daily*78, annually:daily*310, appts:i===0?apptCount():0, members:0, trend:0 };
+  });
 }
 const PERIODS = ['daily','weekly','monthly','quarterly','annually'];
 const PERIOD_LABEL = { daily:'Today', weekly:'This week', monthly:'This month', quarterly:'This quarter', annually:'This year' };
@@ -392,20 +448,67 @@ const CARD = 'background:#fff;border:1px solid #e7e3da;border-radius:16px;';
 
 /* ---------------------------- HANDLERS (App) ------------------------- */
 const App = {
-  /* auth */
-  login(e){
+  /* routing (signed out) */
+  goLanding(){ S.route='landing'; S.authError=''; render(); },
+  goSignin(){ S.route='signin'; S.authError=''; render(); },
+
+  /* sign in / out */
+  signIn(e){
     e.preventDefault();
-    const u = (document.getElementById('loginUser').value || '').trim().toLowerCase();
-    const p = document.getElementById('loginPass').value || '';
-    const found = USERS.find(x => x.user === u && x.pass === p);
-    if (!found){ S.loginError = 'Incorrect username or password.'; render(); return false; }
-    S.session = { user: found.user, name: found.name, role: found.role, title: found.title, initials: found.initials };
+    const tid = document.getElementById('siBusiness').value;
+    const u = (document.getElementById('siUser').value || '').trim().toLowerCase();
+    const p = document.getElementById('siPass').value || '';
+    if (tid === '__platform__'){
+      if (u === PLATFORM.user && p === PLATFORM.pass){ S.session = { platform:true, name:PLATFORM.name }; LS.set(SESSION_KEY,S.session); S.authError=''; render(); return false; }
+      S.authError = 'Incorrect platform credentials.'; render(); return false;
+    }
+    const t = tenantById(tid);
+    const found = t && t.users.find(x => x.user === u && x.pass === p);
+    if (!found){ S.authError = 'Incorrect business, username or password.'; render(); return false; }
+    S.session = { tenantId:t.id, user:found.user, name:found.name, role:found.role, title:found.title, initials:found.initials };
     LS.set(SESSION_KEY, S.session);
-    S.loginError = ''; S.activeModule = 'dashboard'; S.clientView = null; S.mScreen = 'home';
+    S.authError=''; S.activeModule='dashboard'; S.branch=t.branches[0]||''; S.clientView=null; S.mScreen='home';
     render(); return false;
   },
-  logout(){ S.session = null; LS.del(SESSION_KEY); render(); },
-  fillDemo(u){ document.getElementById('loginUser').value = u; document.getElementById('loginPass').value = 'spa123'; document.getElementById('loginUser').focus(); },
+  fillDemo(tid, u){ document.getElementById('siBusiness').value = tid; document.getElementById('siUser').value = u; document.getElementById('siPass').value = 'spa123'; document.getElementById('siUser').focus(); },
+  logout(){ S.session=null; LS.del(SESSION_KEY); S.route='landing'; render(); },
+  switchWorkspace(){ S.session=null; LS.del(SESSION_KEY); S.route='signin'; render(); },
+
+  /* platform console */
+  openTenant(id){ const t=tenantById(id); if(!t) return; const a=t.users.find(u=>u.role==='manager')||t.users[0]; S.session={ tenantId:id, user:a.user, name:a.name, role:a.role, title:a.title, initials:a.initials, fromPlatform:true }; LS.set(SESSION_KEY,S.session); S.activeModule='dashboard'; S.branch=t.branches[0]||''; render(); },
+  backToPlatform(){ S.session={ platform:true, name:PLATFORM.name }; LS.set(SESSION_KEY,S.session); render(); },
+
+  /* onboarding wizard */
+  startOnboard(){ S.route='onboard'; S.onboard={ step:1, name:'', type:'Spa', services:[], branches:[''], adminName:'', adminUser:'', adminPass:'', error:'' }; S.authError=''; render(); },
+  obRead(){ const o=S.onboard; if(!o) return; const g=id=>{const e=document.getElementById(id);return e?e.value:'';};
+    if(o.step===1){ o.name=g('obName').trim()||o.name; const ty=document.getElementById('obType'); if(ty)o.type=ty.value; }
+    if(o.step===3){ o.branches=o.branches.map((b,i)=>{const e=document.getElementById('obBranch'+i);return e?e.value:b;}); }
+    if(o.step===4){ o.adminName=g('obAdminName').trim(); o.adminUser=g('obAdminUser').trim().toLowerCase(); o.adminPass=g('obAdminPass'); } },
+  obToggleService(k){ App.obRead(); const o=S.onboard; const i=o.services.indexOf(k); if(i>=0)o.services.splice(i,1); else o.services.push(k); o.error=''; render(); },
+  obAddBranch(){ App.obRead(); S.onboard.branches.push(''); S._focus='obBranch'+(S.onboard.branches.length-1); render(); },
+  obRemoveBranch(i){ App.obRead(); S.onboard.branches.splice(i,1); if(!S.onboard.branches.length)S.onboard.branches.push(''); render(); },
+  obNext(){ App.obRead(); const o=S.onboard;
+    if(o.step===1 && !o.name.trim()){ o.error='Enter a business name.'; render(); return; }
+    if(o.step===2 && !o.services.length){ o.error='Pick at least one service.'; render(); return; }
+    if(o.step===3 && !o.branches.map(b=>b.trim()).filter(Boolean).length){ o.error='Add at least one branch.'; render(); return; }
+    o.error=''; o.step=Math.min(4,o.step+1); S._focus=null; render(); },
+  obBack(){ App.obRead(); const o=S.onboard; o.error=''; if(o.step===1){ App.goLanding(); return; } o.step=Math.max(1,o.step-1); render(); },
+  createTenant(){ App.obRead(); const o=S.onboard;
+    if(!o.adminName.trim()||!o.adminUser.trim()||!o.adminPass){ o.error='Fill in the admin name, username and password.'; render(); return; }
+    const branches=o.branches.map(b=>b.trim()).filter(Boolean);
+    const id=slug(o.name)+'-'+Math.random().toString(36).slice(2,6);
+    const t={ id, name:o.name.trim(), type:o.type, brandLetter:(o.name.trim()[0]||'B').toUpperCase(), demo:false,
+      services:o.services.slice(), branches,
+      tin:'100'+Math.floor(1000000+Math.random()*8999999), legalName:o.name.trim()+' Ltd',
+      baseline:{ revenue:0, appts:0, receipts:0, newClients:0, occupancy:'—', clientTotal:0, loyalty:0 },
+      branchFigures:{},
+      users:[ { user:o.adminUser, pass:o.adminPass, name:o.adminName, role:'manager', title:'Owner / Admin', initials:initials(o.adminName) } ],
+      data:{ clients:[], newBookings:[], seedCount:0 } };
+    REG.tenants.push(t); saveReg();
+    S.session={ tenantId:id, user:t.users[0].user, name:t.users[0].name, role:'manager', title:t.users[0].title, initials:t.users[0].initials };
+    LS.set(SESSION_KEY,S.session);
+    S.onboard=null; S.route='app'; S.activeModule='dashboard'; S.branch=branches[0]||''; S.clientView=null; S.mScreen='home';
+    render(); },
 
   /* navigation */
   setDevice(d){ S.device = d; render(); },
@@ -488,39 +591,190 @@ function bkNextBtnStyle(ok){
     + (ok ? "background:#3f5340;color:#fff;" : "background:#d8d3c8;color:#a8a396;cursor:not-allowed;");
 }
 
-/* ============================ LOGIN VIEW ============================= */
-function loginView(){
-  const demo = USERS.map(u => `
-    <button type="button" onclick="App.fillDemo('${u.user}')" style="flex:1;text-align:left;border:1px solid #e2ddd3;background:#fff;border-radius:12px;padding:11px 13px;cursor:pointer;">
-      <div style="font-size:13px;font-weight:600;color:#26302a;">${esc(u.name)}</div>
-      <div style="font-size:11.5px;color:#9a9488;margin-top:2px;text-transform:capitalize;">${esc(u.role)} · ${esc(u.user)}</div>
-    </button>`).join('');
+/* ======================= AUTH / SAAS ONBOARDING ===================== */
+const SERVICE_META = { spa:{label:'Spa', desc:'Massage, rituals & hammam'}, salon:{label:'Salon', desc:'Hair, nails & colour'}, gym:{label:'Gym', desc:'Passes, classes & training'} };
+const BIZ_TYPES = ['Spa','Salon','Gym','Hotel','Wellness Club'];
+function platformMark(size, letter){
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:#20261f;display:flex;align-items:center;justify-content:center;color:#c9b491;font-family:'Cormorant Garamond',serif;font-weight:700;font-size:${Math.round(size*0.54)}px;">${esc(letter||'C')}</div>`;
+}
+function authView(){
+  if (S.route === 'onboard' && S.onboard) return onboardView();
+  if (S.route === 'signin') return signinView();
+  return landingView();
+}
+function landingView(){
+  const count = REG.tenants.length;
+  const features = [
+    ['All three sectors','Run spa, salon and gym under one roof — or a hotel offering all of them. Book by sector and package.'],
+    ['EFRIS & VAT built in','Every sale fiscalised URA-style with 18% VAT tracked and accumulated by day, week, month, quarter and year.'],
+    ['Multi-branch & group','Add unlimited branches and see how each one performs against the others, live.'],
+    ['Clients, loyalty & CRM','Profiles, preferences, visit history and loyalty tiers for every guest.'],
+  ].map(([h,d]) => `<div style="${CARD}padding:20px;">
+      <div style="font-weight:600;font-size:15.5px;color:#26302a;margin-bottom:6px;">${esc(h)}</div>
+      <div style="font-size:13px;color:#8f897e;line-height:1.55;">${esc(d)}</div></div>`).join('');
+  return `
+    <div style="min-height:100vh;background:radial-gradient(1200px 600px at 50% -10%, #edeae1, #e7e3da);">
+      <div style="max-width:1060px;margin:0 auto;padding:20px 24px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          ${platformMark(38,'C')}
+          <div style="line-height:1.05;"><div class="serif" style="font-weight:600;font-size:20px;color:#2a2824;">Calabash Cloud</div>
+          <div style="font-size:10px;letter-spacing:2.2px;text-transform:uppercase;color:#9a9488;">Wellness Business Platform</div></div>
+        </div>
+        <button onclick="App.goSignin()" style="padding:9px 16px;border:1px solid #ddd7cb;background:#fff;border-radius:10px;font:600 13px 'Instrument Sans',sans-serif;color:#3f5340;cursor:pointer;">Sign in</button>
+      </div>
+      <div style="max-width:1060px;margin:0 auto;padding:36px 24px 20px;text-align:center;">
+        <div class="serif" style="font-size:44px;line-height:1.08;color:#26302a;max-width:760px;margin:0 auto;">Run your spa, salon, gym or hotel — all in one place.</div>
+        <div style="font-size:15px;color:#8f897e;margin:16px auto 26px;max-width:600px;line-height:1.6;">One platform to onboard any wellness or hospitality business, take bookings across every service, stay tax-compliant, and see every branch at a glance.</div>
+        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+          <button onclick="App.startOnboard()" style="padding:13px 24px;border:none;background:#3f5340;color:#fff;border-radius:12px;font:600 14.5px 'Instrument Sans',sans-serif;cursor:pointer;">Onboard your business →</button>
+          <button onclick="App.goSignin()" style="padding:13px 24px;border:1px solid #ddd7cb;background:#fff;color:#4a4740;border-radius:12px;font:600 14.5px 'Instrument Sans',sans-serif;cursor:pointer;">Sign in</button>
+        </div>
+        <div style="font-size:12px;color:#a8a396;margin-top:14px;">${count} business${count===1?'':'es'} already onboarded on this device.</div>
+      </div>
+      <div style="max-width:1060px;margin:0 auto;padding:20px 24px 60px;display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">${features}</div>
+      <div style="text-align:center;font-size:11px;color:#a8a396;padding:0 24px 40px;line-height:1.6;">Prototype · client-side demo — businesses &amp; data are stored in this browser. A production release adds a shared database, secure accounts and billing.</div>
+    </div>`;
+}
+function signinView(){
+  const opts = REG.tenants.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')
+    + `<option value="__platform__">Platform admin (operator)</option>`;
+  const hasCalabash = tenantById('calabash');
   return `
     <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(1200px 600px at 50% -10%, #edeae1, #e7e3da);">
-      <div style="width:400px;max-width:100%;">
+      <div style="width:410px;max-width:100%;">
         <div style="text-align:center;margin-bottom:22px;">
-          <div style="width:56px;height:56px;border-radius:50%;background:#20261f;display:flex;align-items:center;justify-content:center;color:#c9b491;font-family:'Cormorant Garamond',serif;font-weight:700;font-size:30px;margin:0 auto 14px;">C</div>
-          <div class="serif" style="font-size:28px;color:#26302a;line-height:1.1;">The Calabash</div>
-          <div style="font-size:11px;letter-spacing:2.2px;text-transform:uppercase;color:#9a9488;margin-top:4px;">Spa &amp; Salon · Management Suite</div>
+          <div style="display:flex;justify-content:center;margin-bottom:14px;">${platformMark(56,'C')}</div>
+          <div class="serif" style="font-size:26px;color:#26302a;line-height:1.1;">Welcome back</div>
+          <div style="font-size:12px;color:#9a9488;margin-top:4px;">Sign in to your Calabash Cloud workspace</div>
         </div>
-        <form onsubmit="return App.login(event)" style="${CARD}padding:24px;">
-          <div style="font-weight:600;font-size:16px;color:#26302a;margin-bottom:16px;">Sign in</div>
+        <form onsubmit="return App.signIn(event)" style="${CARD}padding:24px;">
           <div style="margin-bottom:14px;">
-            <label class="lbl" for="loginUser">Username</label>
-            <input id="loginUser" class="fld" autocomplete="username" placeholder="lucy" value="">
+            <label class="lbl" for="siBusiness">Business</label>
+            <select id="siBusiness" class="fld">${opts}</select>
           </div>
-          <div style="margin-bottom:${S.loginError?'10':'18'}px;">
-            <label class="lbl" for="loginPass">Password</label>
-            <input id="loginPass" class="fld" type="password" autocomplete="current-password" placeholder="••••••" value="">
+          <div style="margin-bottom:14px;">
+            <label class="lbl" for="siUser">Username</label>
+            <input id="siUser" class="fld" autocomplete="username" placeholder="username" value="">
           </div>
-          ${S.loginError ? `<div style="font-size:12.5px;color:#b0492a;background:#fbe7e2;border:1px solid #f0d3c8;border-radius:10px;padding:9px 12px;margin-bottom:16px;">${esc(S.loginError)}</div>` : ''}
+          <div style="margin-bottom:${S.authError?'10':'18'}px;">
+            <label class="lbl" for="siPass">Password</label>
+            <input id="siPass" class="fld" type="password" autocomplete="current-password" placeholder="••••••" value="">
+          </div>
+          ${S.authError ? `<div style="font-size:12.5px;color:#b0492a;background:#fbe7e2;border:1px solid #f0d3c8;border-radius:10px;padding:9px 12px;margin-bottom:16px;">${esc(S.authError)}</div>` : ''}
           <button type="submit" style="width:100%;padding:12px;border:none;background:#3f5340;color:#fff;border-radius:12px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;">Sign in</button>
         </form>
-        <div style="margin-top:18px;">
-          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:#9a9488;text-align:center;margin-bottom:10px;">Demo accounts · password <b style="color:#6b665d;">spa123</b></div>
-          <div style="display:flex;gap:10px;">${demo}</div>
+        ${hasCalabash ? `<div style="margin-top:16px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:#9a9488;text-align:center;margin-bottom:10px;">Demo · The Calabash · password <b style="color:#6b665d;">spa123</b></div>
+          <div style="display:flex;gap:10px;">
+            <button type="button" onclick="App.fillDemo('calabash','lucy')" style="flex:1;text-align:left;border:1px solid #e2ddd3;background:#fff;border-radius:12px;padding:11px 13px;cursor:pointer;"><div style="font-size:13px;font-weight:600;color:#26302a;">Lucy Mitambo</div><div style="font-size:11.5px;color:#9a9488;margin-top:2px;">Manager · lucy</div></button>
+            <button type="button" onclick="App.fillDemo('calabash','beatrice')" style="flex:1;text-align:left;border:1px solid #e2ddd3;background:#fff;border-radius:12px;padding:11px 13px;cursor:pointer;"><div style="font-size:13px;font-weight:600;color:#26302a;">Beatrice N.</div><div style="font-size:11.5px;color:#9a9488;margin-top:2px;">Receptionist · beatrice</div></button>
+          </div>
+          <div style="font-size:11px;color:#a8a396;text-align:center;margin-top:8px;">Platform admin: owner / platform</div>
+        </div>` : ''}
+        <div style="text-align:center;margin-top:18px;font-size:13px;color:#8f897e;">New here? <a href="#" onclick="App.startOnboard();return false;">Onboard your business →</a></div>
+        <div style="text-align:center;margin-top:8px;"><a href="#" onclick="App.goLanding();return false;" style="font-size:12px;color:#a8a396;">← Back</a></div>
+      </div>
+    </div>`;
+}
+function onboardView(){
+  const o = S.onboard;
+  const steps = ['Business','Services','Branches','Admin'];
+  const stepper = steps.map((label,i) => {
+    const n=i+1, on=o.step===n, done=o.step>n;
+    const num = "width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;"+(on?"background:#3f5340;color:#fff;":done?"background:#c9b491;color:#4a3f2a;":"background:#eae6dd;color:#9a9488;");
+    const conn = i<steps.length-1 ? '<div style="flex:1;height:1px;background:#e2ddd3;min-width:12px;"></div>' : '';
+    return `<div style="display:flex;align-items:center;gap:7px;"><div style="${num}">${done?'✓':n}</div><div style="font-size:12px;font-weight:${on?'600':'500'};color:${on?'#26302a':'#9a9488'};">${esc(label)}</div></div>${conn}`;
+  }).join('');
+  let body='';
+  if (o.step===1){
+    const types = BIZ_TYPES.map(t=>`<option value="${t}" ${o.type===t?'selected':''}>${t}</option>`).join('');
+    body = `<div style="display:flex;flex-direction:column;gap:16px;">
+      <div><label class="lbl" for="obName">Business name</label><input id="obName" class="fld" value="${esc(o.name)}" placeholder="e.g. Serena Wellness"></div>
+      <div><label class="lbl" for="obType">Business type</label><select id="obType" class="fld">${types}</select></div>
+    </div>`;
+  } else if (o.step===2){
+    const cards = Object.keys(SERVICE_META).map(k=>{
+      const on=o.services.includes(k), m=SERVICE_META[k];
+      return `<button type="button" onclick="App.obToggleService('${k}')" style="text-align:left;border:1.5px solid ${on?'#3f5340':'#e2ddd3'};background:${on?'#eef2ec':'#fff'};border-radius:14px;padding:16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+        <div><div style="font-size:14.5px;font-weight:600;color:#26302a;">${esc(m.label)}</div><div style="font-size:12px;color:#8f897e;margin-top:2px;">${esc(m.desc)}</div></div>
+        <div style="width:22px;height:22px;border-radius:6px;border:1.5px solid ${on?'#3f5340':'#cfc9bd'};background:${on?'#3f5340':'#fff'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;">${on?'✓':''}</div>
+      </button>`;
+    }).join('');
+    body = `<div style="font-size:13px;color:#8f897e;margin-bottom:14px;">Which services does this business offer? Pick any combination — the app shows only what applies.</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">${cards}</div>`;
+  } else if (o.step===3){
+    const rows = o.branches.map((b,i)=>`<div style="display:flex;gap:8px;align-items:center;">
+        <input id="obBranch${i}" class="fld" value="${esc(b)}" placeholder="Branch ${i+1} name (e.g. Kampala)">
+        ${o.branches.length>1?`<button type="button" onclick="App.obRemoveBranch(${i})" style="width:38px;height:40px;border:1px solid #e2ddd3;background:#fff;border-radius:10px;color:#b0492a;cursor:pointer;font-size:15px;">✕</button>`:''}
+      </div>`).join('');
+    body = `<div style="font-size:13px;color:#8f897e;margin-bottom:14px;">Add each physical location. You can add more later.</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">${rows}</div>
+      <button type="button" onclick="App.obAddBranch()" style="margin-top:12px;padding:9px 14px;border:1px dashed #c7c0b2;background:#fbfaf7;border-radius:10px;font:600 13px 'Instrument Sans',sans-serif;color:#3f5340;cursor:pointer;">+ Add another branch</button>`;
+  } else {
+    body = `<div style="font-size:13px;color:#8f897e;margin-bottom:14px;">Create the owner/admin account you'll sign in with.</div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div><label class="lbl" for="obAdminName">Your name</label><input id="obAdminName" class="fld" value="${esc(o.adminName)}" placeholder="e.g. Sarah Nakato"></div>
+        <div><label class="lbl" for="obAdminUser">Username</label><input id="obAdminUser" class="fld" value="${esc(o.adminUser)}" placeholder="e.g. sarah"></div>
+        <div><label class="lbl" for="obAdminPass">Password</label><input id="obAdminPass" class="fld" type="password" value="${esc(o.adminPass)}" placeholder="choose a password"></div>
+      </div>`;
+  }
+  const footer = o.step===4
+    ? `<button type="button" onclick="App.createTenant()" style="padding:11px 22px;border:none;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;background:#3f5340;color:#fff;">Create business &amp; sign in</button>`
+    : `<button type="button" onclick="App.obNext()" style="padding:11px 22px;border:none;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;background:#3f5340;color:#fff;">Continue</button>`;
+  return `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(1200px 600px at 50% -10%, #edeae1, #e7e3da);">
+      <div style="width:520px;max-width:100%;${CARD}overflow:hidden;">
+        <div style="padding:20px 24px;border-bottom:1px solid #eae4d7;display:flex;align-items:center;gap:12px;">
+          ${platformMark(34,(o.name.trim()[0]||'C').toUpperCase())}
+          <div class="serif" style="font-size:20px;color:#26302a;">Onboard your business</div>
         </div>
-        <div style="text-align:center;font-size:11px;color:#a8a396;margin-top:18px;line-height:1.5;">Demo sign-in only — accounts are stored in the page, not a secure server.</div>
+        <div style="padding:16px 24px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;border-bottom:1px solid #f0ede6;">${stepper}</div>
+        <div style="padding:22px 24px;">${body}
+          ${o.error?`<div style="font-size:12.5px;color:#b0492a;background:#fbe7e2;border:1px solid #f0d3c8;border-radius:10px;padding:9px 12px;margin-top:16px;">${esc(o.error)}</div>`:''}
+        </div>
+        <div style="padding:16px 24px;border-top:1px solid #eae4d7;display:flex;justify-content:space-between;gap:12px;background:#f4f1ea;">
+          <button type="button" onclick="App.obBack()" style="padding:11px 20px;border:1px solid #ddd7cb;background:#fff;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">${o.step===1?'Cancel':'Back'}</button>
+          ${footer}
+        </div>
+      </div>
+    </div>`;
+}
+function platformView(){
+  const rows = REG.tenants.map(t => {
+    const svc = t.services.map(s=>SERVICE_META[s]?SERVICE_META[s].label:s).join(' · ');
+    const rev = (t.baseline && t.baseline.revenue) ? fmt(t.baseline.revenue) : (t.demo?'—':'—');
+    return `<tr style="border-top:1px solid #f0ede6;">
+      <td style="padding:12px 8px;"><div style="display:flex;align-items:center;gap:10px;">${platformMark(30,t.brandLetter)}<div><div style="font-size:13.5px;font-weight:600;color:#26302a;">${esc(t.name)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(t.type)}${t.demo?' · demo':''}</div></div></div></td>
+      <td style="padding:12px 8px;font-size:12.5px;color:#6b665d;">${esc(svc)}</td>
+      <td style="padding:12px 8px;font-size:13px;color:#6b665d;">${t.branches.length}</td>
+      <td style="padding:12px 8px;font-size:13px;color:#6b665d;">${t.users.length}</td>
+      <td style="padding:12px 8px;font-size:13px;color:#6b665d;">${t.data.clients.length}</td>
+      <td style="padding:12px 8px;text-align:right;"><button onclick="App.openTenant('${esc(t.id)}')" style="padding:7px 14px;border:1px solid #ddd7cb;background:#fff;border-radius:9px;font:600 12.5px 'Instrument Sans',sans-serif;color:#3f5340;cursor:pointer;">Open →</button></td>
+    </tr>`;
+  }).join('');
+  const th=(t,x='')=>`<th style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:8px 8px;text-align:left;${x}">${t}</th>`;
+  const totalClients = REG.tenants.reduce((s,t)=>s+t.data.clients.length,0);
+  return `
+    <div style="width:100%;min-height:100vh;background:#e7e3da;">
+      <div style="width:100%;background:#20261f;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;">
+        <div style="display:flex;align-items:center;gap:12px;">${platformMark(34,'C')}
+          <div style="line-height:1.05;"><div class="serif" style="font-weight:600;font-size:18px;color:#f3ede0;">Calabash Cloud</div><div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#8b937f;">Platform Console</div></div></div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="font-size:13px;color:#cbd3c4;">${esc(S.session.name)}</span>
+          <button onclick="App.startOnboard()" style="padding:8px 14px;border:none;background:#3f5340;color:#fff;border-radius:9px;font:600 12.5px 'Instrument Sans',sans-serif;cursor:pointer;">+ Onboard business</button>
+          <button onclick="App.logout()" style="padding:8px 12px;border:1px solid #3a4238;background:transparent;color:#cbd3c4;border-radius:9px;font:600 12.5px 'Instrument Sans',sans-serif;cursor:pointer;">Sign out</button>
+        </div>
+      </div>
+      <div style="max-width:1000px;margin:0 auto;padding:30px 24px 60px;">
+        <div class="serif" style="font-size:30px;color:#26302a;">Onboarded Businesses</div>
+        <div style="font-size:13px;color:#8f897e;margin:6px 0 22px;">${REG.tenants.length} businesses · ${totalClients} clients across the platform</div>
+        <div style="${CARD}padding:8px 16px 16px;overflow:auto;">
+          <table style="width:100%;border-collapse:collapse;min-width:680px;">
+            <thead><tr>${th('Business')}${th('Services')}${th('Branches')}${th('Users')}${th('Clients')}${th('',' text-align:right;')}</tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div style="font-size:12px;color:#a8a396;margin-top:16px;line-height:1.6;">Open a business to manage it as its admin. New businesses can self-onboard from the landing page, or you can add one here.</div>
       </div>
     </div>`;
 }
@@ -528,29 +782,33 @@ function loginView(){
 /* ============================ APP CHROME ============================= */
 function topBar(){
   const u = S.session;
-  const brand = 'The Calabash ' + S.branch;
-  const branches = BRANCHES.map(b => `<button onclick="App.setBranch('${b}')" style="${branchStyle(S.branch===b)}">${b}</button>`).join('');
+  const servicesLabel = T.services.map(s => SERVICE_META[s] ? SERVICE_META[s].label : s).join(' · ');
+  const branches = BRANCHES.map(b => `<button onclick="App.setBranch('${esc(b)}')" style="${branchStyle(S.branch===b)}">${esc(b)}</button>`).join('');
+  const backBtn = u.fromPlatform
+    ? `<button onclick="App.backToPlatform()" title="Back to platform console" style="padding:8px 12px;border:1px solid #ddd7cb;background:#fff;border-radius:9px;font:600 12.5px 'Instrument Sans',sans-serif;color:#3f5340;cursor:pointer;">← Platform</button>`
+    : `<button onclick="App.switchWorkspace()" title="Switch business" style="padding:8px 12px;border:1px solid #ddd7cb;background:#fff;border-radius:9px;font:600 12.5px 'Instrument Sans',sans-serif;color:#6b665d;cursor:pointer;">Switch</button>`;
   return `
   <div style="width:100%;background:#fbfaf7;border-bottom:1px solid #e2ddd3;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:20;">
     <div style="display:flex;align-items:center;gap:12px;">
-      <div style="width:34px;height:34px;border-radius:50%;background:#20261f;display:flex;align-items:center;justify-content:center;color:#c9b491;font-family:'Cormorant Garamond',serif;font-weight:700;font-size:19px;">C</div>
+      <div style="width:34px;height:34px;border-radius:50%;background:#20261f;display:flex;align-items:center;justify-content:center;color:#c9b491;font-family:'Cormorant Garamond',serif;font-weight:700;font-size:19px;">${esc(T.brandLetter)}</div>
       <div style="line-height:1.05;">
-        <div class="serif" style="font-weight:600;font-size:19px;color:#2a2824;letter-spacing:.2px;">${esc(brand)}</div>
-        <div style="font-size:10.5px;letter-spacing:2.2px;text-transform:uppercase;color:#9a9488;">Spa &amp; Salon · Management Suite</div>
+        <div class="serif" style="font-weight:600;font-size:19px;color:#2a2824;letter-spacing:.2px;">${esc(T.name)}</div>
+        <div style="font-size:10.5px;letter-spacing:2.2px;text-transform:uppercase;color:#9a9488;">${esc(T.type)} · ${esc(servicesLabel)}</div>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:18px;">
+    <div style="display:flex;align-items:center;gap:14px;">
       <div style="display:flex;background:#f0ede6;border:1px solid #e2ddd3;border-radius:10px;padding:3px;gap:2px;">
         <button onclick="App.setDevice('desktop')" style="${tabStyle(S.device==='desktop')}">Desktop</button>
         <button onclick="App.setDevice('mobile')" style="${tabStyle(S.device==='mobile')}">Mobile</button>
       </div>
-      <div style="display:flex;background:#f0ede6;border:1px solid #e2ddd3;border-radius:10px;padding:3px;gap:2px;">${branches}</div>
+      ${branches ? `<div style="display:flex;background:#f0ede6;border:1px solid #e2ddd3;border-radius:10px;padding:3px;gap:2px;">${branches}</div>` : ''}
       <div style="display:flex;align-items:center;gap:10px;">
         <div style="text-align:right;line-height:1.15;">
           <div style="font-size:13px;font-weight:600;color:#2a2824;">${esc(u.name)}</div>
           <div style="font-size:11px;color:#9a9488;">${esc(u.title)}</div>
         </div>
         <div style="width:36px;height:36px;border-radius:50%;background:#c9b491;color:#4a3f2a;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:14px;">${esc(u.initials)}</div>
+        ${backBtn}
         <button onclick="App.logout()" title="Sign out" style="padding:8px 12px;border:1px solid #ddd7cb;background:#fff;border-radius:9px;font:600 12.5px 'Instrument Sans',sans-serif;color:#6b665d;cursor:pointer;">Sign out</button>
       </div>
     </div>
@@ -567,7 +825,7 @@ function sidebar(){
     <div style="width:236px;flex-shrink:0;background:#20261f;min-height:calc(100vh - 60px);padding:22px 14px;display:flex;flex-direction:column;gap:4px;position:sticky;top:60px;height:calc(100vh - 60px);overflow:auto;">
       ${section('Operations', NAV.Operations)}${section('Finance', NAV.Finance)}${section('Growth', NAV.Growth)}${section('Group', NAV.Group)}${section('Facilities', NAV.Facilities)}
       <div style="margin-top:auto;padding:14px 12px 4px;border-top:1px solid rgba(255,255,255,.07);">
-        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">March 2026 · v1.3</span></div>
+        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">${esc(T.name)} · v2.0</span></div>
       </div>
     </div>`;
 }
@@ -592,21 +850,23 @@ function viewDashboard(){
   const kpis = [
     { label:'Revenue Today', value:(revenueTotal()/1e6).toFixed(2)+'M', delta:'▲ 12% vs yesterday', deltaColor:'#5a7a52' },
     { label:'Appointments', value:String(apptCount()), delta:'6 walk-ins · 4 no-shows', deltaColor:'#9a9488' },
-    { label:'Room Occupancy', value:'74%', delta:'15 rooms · 2 floors', deltaColor:'#9a9488' },
-    { label:'New Clients', value:String(6 + addedClients()), delta:'▲ this week', deltaColor:'#5a7a52' },
+    { label:'Room Occupancy', value:base().occupancy, delta:BRANCHES.length+' branch'+(BRANCHES.length===1?'':'es'), deltaColor:'#9a9488' },
+    { label:'New Clients', value:String(base().newClients + addedClients()), delta:'▲ this week', deltaColor:'#5a7a52' },
   ].map(k => `
     <div style="${CARD}padding:18px 18px 16px;">
       <div style="font-size:12px;color:#9a9488;text-transform:uppercase;letter-spacing:.8px;">${esc(k.label)}</div>
       <div class="serif" style="font-weight:600;font-size:34px;color:#26302a;line-height:1.1;margin-top:6px;">${esc(k.value)}</div>
       <div style="font-size:12px;color:${k.deltaColor};margin-top:4px;">${esc(k.delta)}</div>
     </div>`).join('');
-  const sched = scheduleLive().map(a => `
+  const schedList = scheduleLive();
+  const sched = schedList.length ? schedList.map(a => `
     <div style="display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid #f0ede6;">
       <div style="font-size:13px;font-weight:600;color:#3f5340;width:52px;">${esc(a.time)}</div>
       <div style="width:8px;height:8px;border-radius:50%;background:${a.dot};flex-shrink:0;"></div>
       <div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:500;color:#2a2824;">${esc(a.guest)}</div><div style="font-size:12px;color:#9a9488;">${esc(a.treatment)}</div></div>
       <div style="text-align:right;"><div style="font-size:12.5px;color:#4a4740;">${esc(a.room)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(a.therapist)}</div></div>
-    </div>`).join('');
+    </div>`).join('')
+    : `<div style="font-size:13px;color:#9a9488;padding:16px 2px;">No appointments booked yet. <a href="#" onclick="App.openBooking();return false;">Create a booking →</a></div>`;
   const shift = ON_SHIFT.map(s => `
     <div style="display:flex;align-items:center;gap:10px;padding:7px 0;">
       <div style="width:30px;height:30px;border-radius:50%;background:#eae4d7;color:#7a6f57;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">${esc(s.initials)}</div>
@@ -639,7 +899,7 @@ function viewAppointments(){
     const cells = r.cells.map(k => `<div style="${cellStyle(k)}">${esc(CELL_LABELS[k]||'')}</div>`).join('');
     return `<div style="font-size:12.5px;font-weight:500;color:#3f5340;padding:8px 4px;display:flex;align-items:center;">${esc(r.room)}</div>${cells}`;
   }).join('');
-  const menu = ['spa','salon','gym'].map(sec => {
+  const menu = ['spa','salon','gym'].filter(s => T.services.includes(s)).map(sec => {
     const items = MENU.filter(m => m.sector === sec).map(m => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0ede6;">
         <span style="font-size:13px;color:#2a2824;">${esc(m.name)}</span><span style="font-size:12.5px;color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(m.price)}</span>
@@ -665,6 +925,7 @@ function viewClients(){
   const q = S.clientSearch.trim().toLowerCase();
   const list = DB.clients.map((c,i)=>({c,i})).filter(({c}) => !q || c.name.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q));
   const th = (t, extra='') => `<th style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;font-weight:600;padding:8px 6px;${extra}">${t}</th>`;
+  const emptyMsg = q ? `No clients match “${esc(S.clientSearch)}”.` : 'No clients yet. Use “Add Client” to create your first one.';
   const rows = list.length ? list.map(({c,i}) => `
     <tr class="client-row" onclick="App.openClient(${i})" style="border-top:1px solid #f0ede6;cursor:pointer;">
       <td style="padding:12px 6px;font-size:13.5px;color:#2a2824;font-weight:500;">${esc(c.name)}</td>
@@ -674,13 +935,13 @@ function viewClients(){
       <td style="padding:12px 6px;font-size:13px;color:#6b665d;">${esc(c.last)}</td>
       <td style="padding:12px 6px;font-size:13px;color:#3f5340;font-weight:600;">${esc(fmt(c.spend))}</td>
     </tr>`).join('')
-    : `<tr><td colspan="6" style="padding:26px 6px;text-align:center;font-size:13px;color:#9a9488;">No clients match “${esc(S.clientSearch)}”.</td></tr>`;
-  const total = 1284 + addedClients();
+    : `<tr><td colspan="6" style="padding:26px 6px;text-align:center;font-size:13px;color:#9a9488;">${emptyMsg}</td></tr>`;
+  const total = base().clientTotal + addedClients();
   return `
     <div style="${CARD}padding:8px 20px 16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;gap:12px;flex-wrap:wrap;">
         <input id="clientSearch" value="${esc(S.clientSearch)}" oninput="App.setSearch(this.value)" placeholder="Search clients by name or phone…" style="background:#f4f1ea;border:1px solid #e7e3da;border-radius:10px;padding:9px 14px;font-size:13px;color:#2a2824;width:300px;max-width:100%;outline:none;">
-        <div style="font-size:12px;color:#8f897e;">${total.toLocaleString()} clients · 312 loyalty members</div>
+        <div style="font-size:12px;color:#8f897e;">${total.toLocaleString()} clients${base().loyalty?` · ${base().loyalty} loyalty members`:''}</div>
       </div>
       <table style="width:100%;border-collapse:collapse;">
         <thead><tr style="text-align:left;">${th('Client')}${th('Phone')}${th('Loyalty')}${th('Visits')}${th('Last visit')}${th('Total spend')}</tr></thead>
@@ -1045,9 +1306,9 @@ function viewTaxes(){
             <span style="font-size:11px;font-weight:600;color:#bfe0b4;display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:#7fd07f;display:inline-block;"></span>Online</span>
           </div>
           <div style="font-size:12.5px;line-height:1.9;">
-            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">TIN</span><span>${esc(BIZ.tin)}</span></div>
-            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">Taxpayer</span><span>${esc(BIZ.name)}</span></div>
-            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">Device</span><span>${esc(BIZ.device)}</span></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">TIN</span><span>${esc(biz().tin)}</span></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">Taxpayer</span><span>${esc(biz().name)}</span></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">Device</span><span>${esc(biz().device)}</span></div>
           </div>
           <div style="border-top:1px solid rgba(255,255,255,.12);margin-top:14px;padding-top:14px;display:flex;gap:8px;text-align:center;">
             <div style="flex:1;"><div class="serif" style="font-size:22px;">${invoices}</div><div style="font-size:10.5px;color:#9fb09b;text-transform:uppercase;letter-spacing:.5px;">Fiscalised</div></div>
@@ -1170,7 +1431,8 @@ function bookingStepper(){
 }
 function bookingStepBody(){
   if (S.bkStep === 1){
-    const chips = SECTORS.map(sec => `
+    const avail = SECTORS.filter(sec => sec.key==='all' ? T.services.length>1 : T.services.includes(sec.key));
+    const chips = avail.map(sec => `
       <button onclick="App.pickSector('${sec.key}')" style="${chipStyle(S.bkSector===sec.key)}" title="${esc(sec.desc)}">${esc(sec.label)}</button>`).join('');
     let list;
     if (!S.bkSector){
@@ -1305,7 +1567,7 @@ function mobileStaff(){
       <div style="flex:1;"><div style="font-size:13px;color:#2a2824;">${esc(s.name)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(s.role)}</div></div>
       <div style="font-size:11.5px;color:#6a8168;">${esc(s.shift)}</div>
     </div>`).join('');
-  return `<div class="serif" style="font-size:24px;color:#26302a;margin:6px 0 4px;">On Shift Now</div><div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">${RAW_STAFF.length} team members · Wampewo</div>${shift}`;
+  return `<div class="serif" style="font-size:24px;color:#26302a;margin:6px 0 4px;">On Shift Now</div><div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">${RAW_STAFF.length} team members · ${esc(S.branch)}</div>${shift}`;
 }
 function mobile(){
   const screen = S.mScreen==='home' ? mobileHome() : S.mScreen==='book' ? mobileBook() : mobileStaff();
@@ -1314,7 +1576,7 @@ function mobile(){
     <div style="width:100%;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:34px 0 60px;background:#e7e3da;">
       <div style="width:390px;max-width:100%;height:800px;background:#20261f;border-radius:44px;padding:12px;box-shadow:0 30px 70px rgba(30,28,24,.28);">
         <div style="width:100%;height:100%;background:#f4f1ea;border-radius:33px;overflow:hidden;position:relative;display:flex;flex-direction:column;">
-          <div style="height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font-size:12.5px;font-weight:600;color:#26302a;flex-shrink:0;"><span>9:41</span><span>Wampewo Spa</span><span>100%</span></div>
+          <div style="height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font-size:12.5px;font-weight:600;color:#26302a;flex-shrink:0;"><span>9:41</span><span>${esc(T.name)}</span><span>100%</span></div>
           <div style="flex:1;overflow:auto;padding:6px 18px 20px;">${screen}</div>
           <div style="flex-shrink:0;background:#fbfaf7;border-top:1px solid #eae4d7;padding:8px 14px 14px;display:flex;gap:6px;">${tab('home','Home','⌂')}${tab('book','Book','＋')}${tab('staff','Staff','☰')}</div>
         </div>
@@ -1325,11 +1587,19 @@ function mobile(){
 /* ------------------------------ RENDER ------------------------------- */
 function render(){
   const root = document.getElementById('root');
+  // normalize stale / legacy sessions (e.g. saved before multi-tenant)
+  if (S.session && !S.session.platform && (!S.session.tenantId || !tenantById(S.session.tenantId))){ S.session = null; LS.del(SESSION_KEY); }
+  // signed out → landing / sign-in / onboarding
   if (!S.session){
-    root.innerHTML = loginView();
-    const el = document.getElementById('loginUser'); if (el) el.focus();
+    root.innerHTML = authView();
+    if (S._focus){ const el=document.getElementById(S._focus); if(el){ el.focus(); const v=el.value; el.value=''; el.value=v; } S._focus=null; }
     return;
   }
+  // platform operator console
+  if (S.session.platform){ root.innerHTML = platformView(); return; }
+  // tenant workspace
+  loadContext();
+  if (!T){ S.session = null; LS.del(SESSION_KEY); root.innerHTML = authView(); return; }
   const body = S.device==='desktop' ? desktop() : mobile();
   root.innerHTML = `
     <div style="width:100%;min-height:100vh;background:#e7e3da;display:flex;flex-direction:column;align-items:center;padding:0;">

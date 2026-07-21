@@ -1,8 +1,26 @@
-# The Calabash — Spa & Salon Management Suite
+# Calabash Cloud — Wellness Business Platform
 
-A single-page spa, salon & health-club management app, built from the
-**Calabash Spa Management** design. It's a self-contained `index.html` —
-no build step, no dependencies, no server. Just open it in a browser.
+A single-page, **multi-tenant SaaS prototype** for running spas, salons, gyms
+and hotels. It's a self-contained `index.html` — no build step, no dependencies,
+no server. Just open it in a browser.
+
+You can **onboard multiple businesses**, each choosing which of the three
+services (spa / salon / gym) it offers, with its own branches, users and data.
+A **platform console** lists every onboarded business.
+
+> **Prototype status:** this is a client-side demo — businesses, accounts and
+> data live in the browser's `localStorage`, so it's for demonstrating and
+> pitching the SaaS, not real paying customers yet. See [`ROADMAP.md`](ROADMAP.md)
+> for the plan to convert it into a production, backend-powered SaaS.
+
+## Getting in
+
+- **Landing page** → **Onboard your business** to create a new tenant (name,
+  type, services, branches, admin account), or **Sign in**.
+- **Demo business — The Calabash** (a wellness club with all 3 services):
+  `lucy` / `spa123` (manager) or `beatrice` / `spa123` (receptionist).
+- **Platform admin** (SaaS operator, sees all businesses): choose *Platform
+  admin* in the business dropdown, then `owner` / `platform`.
 
 ## Run
 
