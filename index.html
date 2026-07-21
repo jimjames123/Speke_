@@ -51,10 +51,10 @@ const USERS = [
   { user: 'lucy',     pass: 'spa123', name: 'Lucy Mitambo',  role: 'manager',      title: 'Health Club Manager', initials: 'LM' },
   { user: 'beatrice', pass: 'spa123', name: 'Beatrice N.',   role: 'receptionist', title: 'Receptionist',        initials: 'BE' },
 ];
-const ALL_MODULES = ['dashboard','appointments','clients','billing','inventory','reports','marketing','analytics','staff','gym'];
+const ALL_MODULES = ['dashboard','appointments','clients','billing','taxes','inventory','reports','marketing','analytics','branches','staff','gym'];
 const ROLE_MODULES = {
   manager: ALL_MODULES,
-  // Receptionists don't see Finance (billing, reports) or Growth (marketing, analytics).
+  // Receptionists don't see Finance (billing, taxes, reports), Growth (marketing, analytics) or Group (branches).
   receptionist: ['dashboard','appointments','clients','inventory','staff','gym'],
 };
 const allowed = (m) => S.session && ROLE_MODULES[S.session.role].includes(m);
@@ -68,6 +68,7 @@ const S = {
   branch: 'Wampewo',
   clientView: null,
   clientSearch: '',
+  branchPeriod: 'daily',
   clientForm: null,       // null | { editIndex: number|null }
   formError: '',
   mScreen: 'home',
@@ -88,8 +89,9 @@ const priceNum = (s) => Number(String(s).replace(/[^0-9]/g,'')) || 0;
 const BRANCHES = ['Wampewo','Munyonyo','Bukoto'];
 const NAV = {
   Operations: [['dashboard','Dashboard'],['appointments','Appointments'],['clients','Clients']],
-  Finance:    [['billing','Billing & Payments'],['inventory','Inventory'],['reports','Reports & Ledgers']],
+  Finance:    [['billing','Billing & Payments'],['taxes','Taxes & EFRIS'],['inventory','Inventory'],['reports','Reports & Ledgers']],
   Growth:     [['marketing','Marketing'],['analytics','Analytics']],
+  Group:      [['branches','Branch Performance']],
   Facilities: [['staff','Staff Management'],['gym','Gym & Health Club']],
 };
 const TITLES = {
@@ -97,6 +99,8 @@ const TITLES = {
   appointments: ['Appointments', 'Room schedule & service booking', 'New Booking'],
   clients: ['Client Management', 'Profiles, preferences & service history', 'Add Client'],
   billing: ['Billing & Payments', 'Invoices, receipts & payment processing', 'New Invoice'],
+  taxes: ['Taxes & EFRIS', 'VAT, fiscal receipts & URA compliance', 'Sync EFRIS'],
+  branches: ['Branch Performance', 'Group revenue across all branches', 'Schedule Report'],
   inventory: ['Inventory & Products', 'Stock, equipment & linen tracking', 'Add Product'],
   staff: ['Staff Management', 'Shifts, rooms & service providers', 'Assign Shift'],
   marketing: ['Marketing & Engagement', 'Campaigns, loyalty & outreach', 'New Campaign'],
@@ -293,6 +297,30 @@ function salesLive(){
   return DB.newBookings.map(b => ({ guest:b.guest, treatment:b.treatment, amount:b.amount, receipt:b.receipt, room:b.room, tin:b.tin, tout:b.tout, therapist:b.therapist })).concat(SALES);
 }
 
+// ---- tax / EFRIS (Uganda URA) ----
+// Prices are VAT-inclusive at the standard 18% rate.
+const VAT_RATE = 0.18;
+const vatIncl = (gross) => Math.round(gross * 18 / 118);   // VAT portion of a tax-inclusive price
+const netIncl = (gross) => gross - vatIncl(gross);          // net (VAT-exclusive) portion
+const BIZ = { tin: '1002458973', name: 'Calabash Wellness Ltd', device: 'EFRIS-TZ10-0447' };
+function txns(){
+  const nb = DB.newBookings.map(b => ({ guest:b.guest, treatment:b.treatment, gross:b.amt, receipt:b.receipt, fresh:true }));
+  const seed = SALES.map(s => ({ guest:s.guest, treatment:s.treatment, gross:priceNum(s.amount), receipt:s.receipt, fresh:false }));
+  return nb.concat(seed);
+}
+
+// ---- branch performance (group / all branches) ----
+// Wampewo's daily figure tracks live bookings; other branches are illustrative.
+function branchData(){
+  return [
+    { name:'Wampewo',  daily: revenueTotal(), weekly: 27600000, monthly: 118500000, quarterly: 342000000, annually: 1324000000, appts: apptCount(), members: 214, trend: 12 },
+    { name:'Munyonyo', daily: 5120000,        weekly: 33800000, monthly: 141200000, quarterly: 402500000, annually: 1548000000, appts: 47,          members: 268, trend: 9  },
+    { name:'Bukoto',   daily: 2980000,        weekly: 19400000, monthly: 82600000,  quarterly: 236800000, annually: 912000000,  appts: 29,          members: 154, trend: -3 },
+  ];
+}
+const PERIODS = ['daily','weekly','monthly','quarterly','annually'];
+const PERIOD_LABEL = { daily:'Today', weekly:'This week', monthly:'This month', quarterly:'This quarter', annually:'This year' };
+
 /* ---------------------------- STYLE HELPERS -------------------------- */
 function tierBadge(t) {
   const map = { Gold: '#b08d57;background:#faf1e2', Silver: '#7d7d7d;background:#f0f0f0', Platinum: '#5a6f57;background:#e9efe6', New: '#9a9488;background:#f2f0ea' };
@@ -364,6 +392,7 @@ const App = {
   setDevice(d){ S.device = d; render(); },
   setBranch(b){ S.branch = b; render(); },
   setModule(m){ if (!allowed(m)) return; S.activeModule = m; S.clientView = null; S.clientForm = null; render(); },
+  setBranchPeriod(p){ S.branchPeriod = p; render(); },
   moduleAction(){
     const m = S.activeModule;
     if (m==='dashboard' || m==='appointments') App.openBooking();
@@ -516,9 +545,9 @@ function sidebar(){
   };
   return `
     <div style="width:236px;flex-shrink:0;background:#20261f;min-height:calc(100vh - 60px);padding:22px 14px;display:flex;flex-direction:column;gap:4px;position:sticky;top:60px;height:calc(100vh - 60px);overflow:auto;">
-      ${section('Operations', NAV.Operations)}${section('Finance', NAV.Finance)}${section('Growth', NAV.Growth)}${section('Facilities', NAV.Facilities)}
+      ${section('Operations', NAV.Operations)}${section('Finance', NAV.Finance)}${section('Growth', NAV.Growth)}${section('Group', NAV.Group)}${section('Facilities', NAV.Facilities)}
       <div style="margin-top:auto;padding:14px 12px 4px;border-top:1px solid rgba(255,255,255,.07);">
-        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">March 2026 · v1.1</span></div>
+        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">March 2026 · v1.2</span></div>
       </div>
     </div>`;
 }
@@ -937,6 +966,148 @@ function viewGym(){
     </div>`;
 }
 
+/* -- Taxes & EFRIS -- */
+function viewTaxes(){
+  const gross = revenueTotal(), vat = vatIncl(gross), net = gross - vat, invoices = receiptsCount();
+  const kpi = (label, value, sub, color) => `
+    <div style="${CARD}padding:18px 18px 16px;">
+      <div style="font-size:12px;color:#9a9488;text-transform:uppercase;letter-spacing:.8px;">${esc(label)}</div>
+      <div class="serif" style="font-weight:600;font-size:27px;color:#26302a;line-height:1.1;margin-top:6px;">${esc(value)}</div>
+      <div style="font-size:12px;color:${color||'#9a9488'};margin-top:4px;">${esc(sub)}</div>
+    </div>`;
+  const kpis = [
+    kpi('Gross Sales · today', fmt(gross), 'VAT-inclusive'),
+    kpi('VAT @ 18% · today', fmt(vat), '▲ Output VAT collected', '#5a7a52'),
+    kpi('Net Revenue · today', fmt(net), 'Excl. VAT'),
+    kpi('EFRIS Invoices', String(invoices), 'Fiscalised today', '#5a7a52'),
+  ].join('');
+  const efrisBadge = "font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:20px;color:#5a6f57;background:#e9efe6;";
+  const rows = txns().map(t => {
+    const v = vatIncl(t.gross), n = t.gross - v;
+    const fdn = '3200' + t.receipt.replace(/\D/g,'') + '9';
+    return `<tr style="border-top:1px solid #f0ede6;">
+      <td style="padding:10px 6px;font-size:12.5px;color:#9a9488;">${esc(t.receipt)}</td>
+      <td style="padding:10px 6px;font-size:13px;color:#2a2824;font-weight:500;">${esc(t.guest)}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(fmt(t.gross))}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(fmt(n))}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#3f5340;font-weight:600;">${esc(fmt(v))}</td>
+      <td style="padding:10px 6px;font-size:12px;color:#8f897e;font-family:ui-monospace,monospace;">${esc(fdn)}</td>
+      <td style="padding:10px 6px;"><span style="${efrisBadge}">Fiscalised</span></td>
+    </tr>`;
+  }).join('');
+  const periodRows = branchData()[0] && PERIODS.map(p => {
+    const g = branchData()[0][p];
+    return `<tr style="border-top:1px solid #f0ede6;">
+      <td style="padding:10px 6px;font-size:13px;color:#2a2824;font-weight:500;">${esc(PERIOD_LABEL[p])}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(fmt(g))}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(fmt(netIncl(g)))}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#3f5340;font-weight:600;text-align:right;">${esc(fmt(vatIncl(g)))}</td>
+    </tr>`;
+  }).join('');
+  const th = (t, extra='') => `<th style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:8px 6px;text-align:left;${extra}">${t}</th>`;
+  return `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:18px;">${kpis}</div>
+    <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start;">
+      <div style="${CARD}padding:8px 20px 16px;overflow:auto;">
+        <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">EFRIS Fiscal Receipts · Today</div>
+        <table style="width:100%;border-collapse:collapse;min-width:640px;">
+          <thead><tr>${th('Receipt')}${th('Guest')}${th('Gross')}${th('Net')}${th('VAT 18%')}${th('EFRIS FDN')}${th('Status')}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="background:#26302a;border-radius:16px;padding:20px;color:#e9ede6;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#9fb09b;">EFRIS Device</div>
+            <span style="font-size:11px;font-weight:600;color:#bfe0b4;display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:#7fd07f;display:inline-block;"></span>Online</span>
+          </div>
+          <div style="font-size:12.5px;line-height:1.9;">
+            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">TIN</span><span>${esc(BIZ.tin)}</span></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">Taxpayer</span><span>${esc(BIZ.name)}</span></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#9fb09b;">Device</span><span>${esc(BIZ.device)}</span></div>
+          </div>
+          <div style="border-top:1px solid rgba(255,255,255,.12);margin-top:14px;padding-top:14px;display:flex;gap:8px;text-align:center;">
+            <div style="flex:1;"><div class="serif" style="font-size:22px;">${invoices}</div><div style="font-size:10.5px;color:#9fb09b;text-transform:uppercase;letter-spacing:.5px;">Fiscalised</div></div>
+            <div style="flex:1;"><div class="serif" style="font-size:22px;">2</div><div style="font-size:10.5px;color:#9fb09b;text-transform:uppercase;letter-spacing:.5px;">Queued</div></div>
+            <div style="flex:1;"><div class="serif" style="font-size:22px;">0</div><div style="font-size:10.5px;color:#9fb09b;text-transform:uppercase;letter-spacing:.5px;">Failed</div></div>
+          </div>
+        </div>
+        <div style="${CARD}padding:20px;">
+          <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Tax Breakdown · Today</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0ede6;font-size:13px;"><span style="color:#4a4740;">Output VAT (18%)</span><span style="color:#3f5340;font-weight:600;">${esc(fmt(vat))}</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0ede6;font-size:13px;"><span style="color:#4a4740;">Zero-rated / exempt</span><span style="color:#9a9488;">${esc(fmt(0))}</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 2px;font-size:13.5px;"><span style="color:#26302a;font-weight:600;">Total due to URA</span><span style="color:#3f5340;font-weight:700;">${esc(fmt(vat))}</span></div>
+        </div>
+      </div>
+    </div>
+    <div style="${CARD}padding:8px 20px 16px;margin-top:16px;">
+      <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">Accumulated VAT · ${esc(S.branch)} branch</div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr>${th('Period')}${th('Gross sales')}${th('Net')}${th('VAT @ 18%', 'text-align:right;')}</tr></thead>
+        <tbody>${periodRows}</tbody>
+      </table>
+    </div>`;
+}
+
+/* -- Branch Performance (group) -- */
+function viewBranches(){
+  const period = S.branchPeriod, data = branchData();
+  const vals = data.map(b => b[period]);
+  const total = vals.reduce((a,b)=>a+b,0), max = Math.max.apply(null, vals);
+  const top = data[vals.indexOf(max)];
+  const toggle = PERIODS.map(p => `<button onclick="App.setBranchPeriod('${p}')" style="${chipStyle(period===p)}">${esc(p[0].toUpperCase()+p.slice(1))}</button>`).join('');
+  const kpi = (label, value, sub, color) => `
+    <div style="${CARD}padding:18px 18px 16px;">
+      <div style="font-size:12px;color:#9a9488;text-transform:uppercase;letter-spacing:.8px;">${esc(label)}</div>
+      <div class="serif" style="font-weight:600;font-size:26px;color:#26302a;line-height:1.1;margin-top:6px;">${esc(value)}</div>
+      <div style="font-size:12px;color:${color||'#9a9488'};margin-top:4px;">${esc(sub)}</div>
+    </div>`;
+  const kpis = [
+    kpi('Group Revenue', fmt(total), PERIOD_LABEL[period]),
+    kpi('Top Branch', top.name, fmt(top[period]), '#5a7a52'),
+    kpi('Group VAT @ 18%', fmt(vatIncl(total)), 'Payable to URA'),
+    kpi('Branches', '3', 'Wampewo · Munyonyo · Bukoto'),
+  ].join('');
+  const bars = data.map(b => {
+    const h = max ? Math.round(b[period]/max*100) : 0;
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end;">
+      <div style="font-size:12px;color:#7a6f57;font-weight:600;">${esc(fmt(b[period]))}</div>
+      <div style="width:100%;max-width:110px;height:${h}%;background:linear-gradient(#7d9179,#5a6f57);border-radius:10px 10px 0 0;"></div>
+      <div style="font-size:12.5px;color:#26302a;font-weight:600;">${esc(b.name)}</div>
+    </div>`;
+  }).join('');
+  const rows = data.slice().sort((a,b)=>b[period]-a[period]).map((b,i) => {
+    const share = total ? (b[period]/total*100).toFixed(1) : '0.0';
+    const tCol = b.trend>=0 ? '#5a7a52' : '#b0492a';
+    const measure = period==='daily' ? (b.appts + ' appts') : (b.members + ' members');
+    return `<tr style="border-top:1px solid #f0ede6;">
+      <td style="padding:12px 6px;font-size:13px;color:#9a9488;width:28px;">${i+1}</td>
+      <td style="padding:12px 6px;font-size:13.5px;color:#2a2824;font-weight:500;">${esc(b.name)}</td>
+      <td style="padding:12px 6px;font-size:13px;color:#3f5340;font-weight:600;">${esc(fmt(b[period]))}</td>
+      <td style="padding:12px 6px;font-size:12.5px;color:#6b665d;">${share}%</td>
+      <td style="padding:12px 6px;font-size:12.5px;color:#6b665d;">${esc(measure)}</td>
+      <td style="padding:12px 6px;font-size:12.5px;color:${tCol};font-weight:600;text-align:right;">${b.trend>=0?'▲':'▼'} ${Math.abs(b.trend)}%</td>
+    </tr>`;
+  }).join('');
+  const th = (t, extra='') => `<th style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:8px 6px;text-align:left;${extra}">${t}</th>`;
+  return `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">${toggle}</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px;">${kpis}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+      <div style="${CARD}padding:22px;">
+        <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:20px;">Revenue by branch · ${esc(PERIOD_LABEL[period])}</div>
+        <div style="display:flex;align-items:flex-end;gap:26px;height:210px;padding:0 8px;">${bars}</div>
+      </div>
+      <div style="${CARD}padding:8px 20px 16px;">
+        <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">League table · ${esc(PERIOD_LABEL[period])}</div>
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr>${th('#')}${th('Branch')}${th('Revenue')}${th('Share')}${th('Activity')}${th('vs last', 'text-align:right;')}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function moduleBody(){
   if (!allowed(S.activeModule)) S.activeModule = 'dashboard';
   switch (S.activeModule){
@@ -944,6 +1115,8 @@ function moduleBody(){
     case 'appointments': return viewAppointments();
     case 'clients': return viewClients();
     case 'billing': return viewBilling();
+    case 'taxes': return viewTaxes();
+    case 'branches': return viewBranches();
     case 'inventory': return viewInventory();
     case 'staff': return viewStaff();
     case 'marketing': return viewMarketing();
