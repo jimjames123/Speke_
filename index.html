@@ -74,7 +74,7 @@ const S = {
   mScreen: 'home',
   // booking wizard
   bkOpen: false, bkStep: 1, bkDone: false,
-  bkService: null, bkDay: 0, bkTime: null, bkTherapist: null, bkRoom: null,
+  bkSector: null, bkService: null, bkDay: 0, bkTime: null, bkTherapist: null, bkRoom: null,
   bkClient: '', bkPhone: '', bkPayment: null, bkReminder: true,
   _focus: null,
 };
@@ -108,18 +108,37 @@ const TITLES = {
   reports: ['Reports & Ledgers', 'Customised spa & gym reports', 'Build Report'],
   gym: ['Gym & Health Club', 'Memberships, classes & day passes', 'New Member'],
 };
-const MENU = [
-  { name: 'Swedish Massage · 60min', price: CUR + ' 180,000' },
-  { name: 'Deep Tissue · 60min', price: CUR + ' 200,000' },
-  { name: 'Egyptian Hammam', price: CUR + ' 250,000' },
-  { name: 'Choco-luxe Ritual', price: CUR + ' 220,000' },
-  { name: 'Classic Manicure', price: CUR + ' 70,000' },
-  { name: 'Classic Pedicure', price: CUR + ' 90,000' },
-  { name: 'Shellac Manicure', price: CUR + ' 120,000' },
-  { name: 'Cornrows · Medium', price: CUR + ' 100,000' },
-  { name: 'Full Head Colour', price: CUR + ' 100,000' },
-  { name: 'Keratin 72 · Medium', price: CUR + ' 250,000' },
+// Sectors of the business the client can book into.
+const SECTORS = [
+  { key:'spa',   label:'Spa',          desc:'Massage, rituals & hammam' },
+  { key:'salon', label:'Salon',        desc:'Hair, nails & colour' },
+  { key:'gym',   label:'Gym',          desc:'Passes, classes & training' },
+  { key:'all',   label:'All Services', desc:'Combined spa · salon · gym packages' },
 ];
+const SECTOR_LABEL = { spa:'Spa', salon:'Salon', gym:'Gym', all:'All Services' };
+// Master service list, each tagged with its sector. 'all' = cross-sector bundles.
+const SERVICES = [
+  { name: 'Swedish Massage · 60min', price: CUR + ' 180,000', sector: 'spa' },
+  { name: 'Deep Tissue · 60min',     price: CUR + ' 200,000', sector: 'spa' },
+  { name: 'Egyptian Hammam',         price: CUR + ' 250,000', sector: 'spa' },
+  { name: 'Choco-luxe Ritual',       price: CUR + ' 220,000', sector: 'spa' },
+  { name: 'Aromatherapy · 60min',    price: CUR + ' 190,000', sector: 'spa' },
+  { name: 'Classic Manicure',        price: CUR + ' 70,000',  sector: 'salon' },
+  { name: 'Classic Pedicure',        price: CUR + ' 90,000',  sector: 'salon' },
+  { name: 'Shellac Manicure',        price: CUR + ' 120,000', sector: 'salon' },
+  { name: 'Cornrows · Medium',       price: CUR + ' 100,000', sector: 'salon' },
+  { name: 'Full Head Colour',        price: CUR + ' 100,000', sector: 'salon' },
+  { name: 'Keratin 72 · Medium',     price: CUR + ' 250,000', sector: 'salon' },
+  { name: 'Gym Day Pass',            price: CUR + ' 30,000',  sector: 'gym' },
+  { name: 'Personal Training · 1hr', price: CUR + ' 80,000',  sector: 'gym' },
+  { name: 'Group Class · drop-in',   price: CUR + ' 25,000',  sector: 'gym' },
+  { name: 'Monthly Membership',      price: CUR + ' 200,000', sector: 'gym' },
+  { name: 'Full Day Retreat · Spa + Salon + Gym', price: CUR + ' 450,000', sector: 'all' },
+  { name: 'Couples Wellness Package · all sectors', price: CUR + ' 600,000', sector: 'all' },
+  { name: 'Ultimate Pamper Day · all sectors',      price: CUR + ' 550,000', sector: 'all' },
+];
+// Individual (non-bundle) services for the quick menus.
+const MENU = SERVICES.filter(s => s.sector !== 'all');
 const RAW_STAFF = [
   ['Justin','Supervisor'],['Sharon','Supervisor'],['Beatrice','Receptionist'],['Anita','Receptionist'],
   ['Olivia','Reception trainee'],['Muhunza Nana','Therapist'],['Nanono Desire','Therapist'],['Nassuna Phiona','Therapist'],
@@ -274,7 +293,7 @@ const BK_TIMES = ['09:00','10:15','11:30','13:00','14:45','16:00','17:30','18:45
 const BK_THERAPISTS = ['Nanono Desire','Grace Akiteng','Bukirwa Rose','Kirabo Sophie','Najjemba Harriet','Sarah Amanya'];
 const BK_ROOMS = ['Lily','Orchid','Rose','Lavender','Lotus (couple)','Bamboo','Jasmine','Hammam'];
 const BK_PAYMENTS = ['Mobile Money','Credit / Debit Card','Pesapal','Digital Wallet','Pay at desk'];
-const BK_STEP_LABELS = ['Service','Date & Time','Therapist & Room','Client','Confirm'];
+const BK_STEP_LABELS = ['Package','Date & Time','Therapist & Room','Client','Confirm'];
 const TIERS = ['New','Silver','Gold','Platinum'];
 
 /* ------------------------------ THE DB ------------------------------- */
@@ -430,7 +449,7 @@ const App = {
 
   /* booking */
   openBooking(prefillIdx){
-    Object.assign(S, { bkOpen:true, bkStep:1, bkDone:false, bkService:null, bkDay:0, bkTime:null, bkTherapist:null, bkRoom:null,
+    Object.assign(S, { bkOpen:true, bkStep:1, bkDone:false, bkSector:null, bkService:null, bkDay:0, bkTime:null, bkTherapist:null, bkRoom:null,
       bkClient:'', bkPhone:'', bkPayment:null, bkReminder:true, _focus:null });
     if (typeof prefillIdx === 'number' && DB.clients[prefillIdx]){ S.bkClient = DB.clients[prefillIdx].name; S.bkPhone = DB.clients[prefillIdx].phone; }
     render();
@@ -446,13 +465,14 @@ const App = {
   },
   bkBack(){ S.bkStep=Math.max(1,S.bkStep-1); S._focus=null; render(); },
   commitBooking(){
-    const svc = MENU[S.bkService];
+    const svc = SERVICES[S.bkService];
     const amt = priceNum(svc.price);
     const n = DB.newBookings.length;
-    DB.newBookings.unshift({ time:S.bkTime, guest:S.bkClient, treatment:svc.name, room:S.bkRoom, therapist:S.bkTherapist,
+    DB.newBookings.unshift({ time:S.bkTime, guest:S.bkClient, treatment:svc.name, sector:svc.sector, room:S.bkRoom, therapist:S.bkTherapist,
       amt, amount:svc.price, receipt:'RC-'+(4827+n), tin:S.bkTime, tout:'—', payment:S.bkPayment, reminder:S.bkReminder });
     saveDB();
   },
+  pickSector(k){ S.bkSector=k; S.bkService=null; render(); },
   pickService(i){ S.bkService=i; render(); },
   pickDay(i){ S.bkDay=i; render(); },
   pickTime(t){ S.bkTime=t; render(); },
@@ -547,7 +567,7 @@ function sidebar(){
     <div style="width:236px;flex-shrink:0;background:#20261f;min-height:calc(100vh - 60px);padding:22px 14px;display:flex;flex-direction:column;gap:4px;position:sticky;top:60px;height:calc(100vh - 60px);overflow:auto;">
       ${section('Operations', NAV.Operations)}${section('Finance', NAV.Finance)}${section('Growth', NAV.Growth)}${section('Group', NAV.Group)}${section('Facilities', NAV.Facilities)}
       <div style="margin-top:auto;padding:14px 12px 4px;border-top:1px solid rgba(255,255,255,.07);">
-        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">March 2026 · v1.2</span></div>
+        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">March 2026 · v1.3</span></div>
       </div>
     </div>`;
 }
@@ -619,10 +639,13 @@ function viewAppointments(){
     const cells = r.cells.map(k => `<div style="${cellStyle(k)}">${esc(CELL_LABELS[k]||'')}</div>`).join('');
     return `<div style="font-size:12.5px;font-weight:500;color:#3f5340;padding:8px 4px;display:flex;align-items:center;">${esc(r.room)}</div>${cells}`;
   }).join('');
-  const menu = MENU.map(m => `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0ede6;">
-      <span style="font-size:13px;color:#2a2824;">${esc(m.name)}</span><span style="font-size:12.5px;color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(m.price)}</span>
-    </div>`).join('');
+  const menu = ['spa','salon','gym'].map(sec => {
+    const items = MENU.filter(m => m.sector === sec).map(m => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0ede6;">
+        <span style="font-size:13px;color:#2a2824;">${esc(m.name)}</span><span style="font-size:12.5px;color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(m.price)}</span>
+      </div>`).join('');
+    return `<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:#3f5340;font-weight:600;margin:14px 0 2px;">${esc(SECTOR_LABEL[sec])}</div>${items}`;
+  }).join('');
   return `
     <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;">
       <div style="${CARD}padding:20px;overflow:auto;">
@@ -1147,9 +1170,21 @@ function bookingStepper(){
 }
 function bookingStepBody(){
   if (S.bkStep === 1){
-    const opts = MENU.map((mi, i) => `
-      <button onclick="App.pickService(${i})" style="${optStyle(S.bkService===i)}"><span>${esc(mi.name)}</span><span style="color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(mi.price)}</span></button>`).join('');
-    return `<div style="display:flex;flex-direction:column;gap:9px;">${opts}</div>`;
+    const chips = SECTORS.map(sec => `
+      <button onclick="App.pickSector('${sec.key}')" style="${chipStyle(S.bkSector===sec.key)}" title="${esc(sec.desc)}">${esc(sec.label)}</button>`).join('');
+    let list;
+    if (!S.bkSector){
+      list = `<div style="font-size:13px;color:#9a9488;padding:16px 2px;">Choose a sector above to see its ${''}services and packages.</div>`;
+    } else {
+      const items = SERVICES.map((sv,gi) => ({ sv, gi })).filter(({sv}) => sv.sector === S.bkSector);
+      const heading = S.bkSector === 'all' ? 'All-access packages' : SECTOR_LABEL[S.bkSector] + ' services';
+      list = `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin:18px 0 9px;">${esc(heading)}</div>
+        <div style="display:flex;flex-direction:column;gap:9px;">`
+        + items.map(({sv,gi}) => `<button onclick="App.pickService(${gi})" style="${optStyle(S.bkService===gi)}"><span>${esc(sv.name)}</span><span style="color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(sv.price)}</span></button>`).join('')
+        + `</div>`;
+    }
+    return `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin-bottom:9px;">Which part of the club?</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">${chips}</div>${list}`;
   }
   if (S.bkStep === 2){
     const days = BK_DAYS.map((d, i) => `<button onclick="App.pickDay(${i})" style="${chipStyle(S.bkDay===i)}">${esc(d)}</button>`).join('');
@@ -1189,21 +1224,22 @@ function bookingStepBody(){
         </div>
       </div>`;
   }
-  const service = S.bkService!==null ? MENU[S.bkService].name : '—';
-  const price = S.bkService!==null ? MENU[S.bkService].price : '—';
+  const service = S.bkService!==null ? SERVICES[S.bkService].name : '—';
+  const price = S.bkService!==null ? SERVICES[S.bkService].price : '—';
+  const sector = S.bkService!==null ? SECTOR_LABEL[SERVICES[S.bkService].sector] : '—';
   const row = (l, v) => `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f0ede6;font-size:13.5px;"><span style="color:#9a9488;">${l}</span><span style="color:#26302a;font-weight:500;text-align:right;">${esc(v)}</span></div>`;
   if (S.bkDone){
     return `
       <div style="text-align:center;padding:24px 10px;">
         <div style="width:64px;height:64px;border-radius:50%;background:#eef2ec;color:#3f5340;display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 16px;">✓</div>
         <div class="serif" style="font-size:24px;color:#26302a;">Booking Confirmed</div>
-        <div style="font-size:13.5px;color:#8f897e;margin-top:8px;line-height:1.5;">${esc(service)} for ${esc(S.bkClient||'the client')}<br>${esc(BK_DAYS[S.bkDay||0])} March 2026 · ${esc(S.bkTime||'—')} · ${esc(S.bkRoom||'—')}</div>
+        <div style="font-size:13.5px;color:#8f897e;margin-top:8px;line-height:1.5;">${esc(sector)} · ${esc(service)} for ${esc(S.bkClient||'the client')}<br>${esc(BK_DAYS[S.bkDay||0])} March 2026 · ${esc(S.bkTime||'—')} · ${esc(S.bkRoom||'—')}</div>
         <div style="font-size:12.5px;color:#6a8168;margin-top:10px;">Added to Today's Schedule &amp; Billing.${S.bkReminder?' An SMS reminder will be sent 24h before.':''}</div>
       </div>`;
   }
   return `
     <div style="${CARD}padding:6px 18px;">
-      ${row('Service', service)}${row('Price', price)}${row('Date', BK_DAYS[S.bkDay||0] + ' March 2026')}${row('Time', S.bkTime || '—')}
+      ${row('Sector', sector)}${row('Service', service)}${row('Price', price)}${row('Date', BK_DAYS[S.bkDay||0] + ' March 2026')}${row('Time', S.bkTime || '—')}
       ${row('Therapist', S.bkTherapist || '—')}${row('Room', S.bkRoom || '—')}${row('Client', S.bkClient || '—')}${row('Phone', S.bkPhone || '—')}${row('Branch', 'The Calabash ' + S.branch)}
     </div>
     <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin:18px 0 9px;">Payment method</div>

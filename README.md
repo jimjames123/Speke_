@@ -67,6 +67,8 @@ Both admin modules are visible to the **Manager** role only.
 - **Real bookings** — the 5-step New Booking wizard actually creates the
   appointment: it's added to Today's Schedule and the Billing register (with a
   fresh receipt number), and the dashboard Revenue / Appointments counts update.
+  Booking starts by choosing a **sector — Spa, Salon, Gym, or All Services**
+  (combined cross-sector packages) — which filters the services/packages shown.
 - **Add & edit clients** — a working form creates new clients and edits
   existing ones; changes survive a page reload.
 - **Working search** — the client search box filters the list by name or phone
