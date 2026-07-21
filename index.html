@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Calabash · Spa &amp; Salon Management Suite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: #e7e3da; font-family: 'Instrument Sans', system-ui, sans-serif; color: #2a2824; -webkit-font-smoothing: antialiased; }
+  a { color: #6a8168; text-decoration: none; }
+  a:hover { color: #4f6350; }
+  button { font-family: 'Instrument Sans', sans-serif; }
+  input { font-family: 'Instrument Sans', sans-serif; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #cfc9bd; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  tr.client-row:hover { background: #f7f5f0; }
+  .serif { font-family: 'Cormorant Garamond', serif; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   The Calabash — Spa & Salon Management Suite
+   Rebuilt from the Calabash Spa Management design as a standalone SPA.
+   Single-file, no build step, no runtime dependencies.
+   ===================================================================== */
+
+/* ---------------------------- STATE ---------------------------------- */
+const S = {
+  device: 'desktop',
+  activeModule: 'dashboard',
+  branch: 'Wampewo',
+  clientView: null,
+  mScreen: 'home',
+  // booking wizard
+  bkOpen: false, bkStep: 1, bkDone: false,
+  bkService: null, bkDay: 0, bkTime: null, bkTherapist: null, bkRoom: null,
+  bkClient: '', bkPhone: '', bkPayment: null, bkReminder: true,
+  _focus: null,
+};
+
+const CUR = 'Ugx';
+const fmt = (n) => CUR + ' ' + n.toLocaleString('en-US');
+const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const initials = (name) => { const p = name.trim().split(/\s+/); return ((p[0]||'')[0]||'') + ((p[1]||'')[0]||''); };
+
+/* --------------------------- STATIC DATA ----------------------------- */
+const BRANCHES = ['Wampewo','Munyonyo','Bukoto'];
+
+const NAV = {
+  Operations: [['dashboard','Dashboard'],['appointments','Appointments'],['clients','Clients']],
+  Finance:    [['billing','Billing & Payments'],['inventory','Inventory'],['reports','Reports & Ledgers']],
+  Growth:     [['marketing','Marketing'],['analytics','Analytics']],
+  Facilities: [['staff','Staff Management'],['gym','Gym & Health Club']],
+};
+
+const TITLES = {
+  dashboard: ['Dashboard', 'Today at a glance', 'New Booking'],
+  appointments: ['Appointments', 'Room schedule & service booking', 'New Booking'],
+  clients: ['Client Management', 'Profiles, preferences & service history', 'Add Client'],
+  billing: ['Billing & Payments', 'Invoices, receipts & payment processing', 'New Invoice'],
+  inventory: ['Inventory & Products', 'Stock, equipment & linen tracking', 'Add Product'],
+  staff: ['Staff Management', 'Shifts, rooms & service providers', 'Assign Shift'],
+  marketing: ['Marketing & Engagement', 'Campaigns, loyalty & outreach', 'New Campaign'],
+  analytics: ['Analytics & Reporting', 'Sales, appointment & client insights', 'Export'],
+  reports: ['Reports & Ledgers', 'Customised spa & gym reports', 'Build Report'],
+  gym: ['Gym & Health Club', 'Memberships, classes & day passes', 'New Member'],
+};
+
+const MENU = [
+  { name: 'Swedish Massage · 60min', price: CUR + ' 180,000' },
+  { name: 'Deep Tissue · 60min', price: CUR + ' 200,000' },
+  { name: 'Egyptian Hammam', price: CUR + ' 250,000' },
+  { name: 'Choco-luxe Ritual', price: CUR + ' 220,000' },
+  { name: 'Classic Manicure', price: CUR + ' 70,000' },
+  { name: 'Classic Pedicure', price: CUR + ' 90,000' },
+  { name: 'Shellac Manicure', price: CUR + ' 120,000' },
+  { name: 'Cornrows · Medium', price: CUR + ' 100,000' },
+  { name: 'Full Head Colour', price: CUR + ' 100,000' },
+  { name: 'Keratin 72 · Medium', price: CUR + ' 250,000' },
+];
+
+const RAW_STAFF = [
+  ['Justin','Supervisor'],['Sharon','Supervisor'],['Beatrice','Receptionist'],['Anita','Receptionist'],
+  ['Olivia','Reception trainee'],['Muhunza Nana','Therapist'],['Nanono Desire','Therapist'],['Nassuna Phiona','Therapist'],
+  ['Nasirumbi Monica','Therapist'],['Najjemba Harriet','Therapist'],['Bukirwa Rose Mary','Therapist'],['Nakabuye Alice','Therapist'],
+  ['Natukunda Aisha','Therapist'],['Kirabo Sophie','Therapist'],['Kayitesi Racheal','Therapist'],['Nyangoma Ashfat','Therapist'],
+  ['Bagenyi Eva','Therapist'],['Mahoro Robina','Therapist'],['Wafula Beatrice','Therapist'],['Santrina Musiimenta','Therapist'],
+  ['Natasha Kebirungi','Therapist'],['Miriam Kukunda','Therapist'],['Pauline Kainza','Therapist'],['Nantambi Jennifer','Therapist'],
+  ['Faith Ariong','Therapist'],['Rebecca Nakinya','Therapist'],['Sarah Amanya','Therapist'],['Sumaiya Umotoniwase','Therapist'],
+  ['Allen Nalugya','Therapist'],['Grace Akiteng','Therapist'],['Maria Namutebi','Therapist · in training'],
+  ['Karungi Hellen','Hair dresser'],['Tusuubira Resty','Hair dresser'],['Ndimubonakuli Florence','Hair dresser'],
+  ['Katwala Farouk','Hair dresser'],['Musinguzi Richard','Hair dresser'],['Faheem','Hair dresser'],
+  ['Kamulegeya Daniel','Nail technician'],['Winnie','Nail technician'],
+];
+
+const ROOMS1 = ['Lily','Orchid','Rose','Lavender','Lotus*','Bamboo','Jasmine','Hammam'];
+const ROOMS2 = ['Cinnamon*','Sandalwood','Gardenia','Magnolia*','Eucalyptus*','Peppermint','Hibiscus'];
+
+const SCHED = [
+  { room: 'Lily',     cells: ['','book','book','','hold',''] },
+  { room: 'Orchid',   cells: ['book','book','','book','',''] },
+  { room: 'Rose',     cells: ['','','book','book','book',''] },
+  { room: 'Lavender', cells: ['book','','','','book','book'] },
+  { room: 'Lotus',    cells: ['couple','couple','','couple','couple',''] },
+  { room: 'Bamboo',   cells: ['','book','','hold','','book'] },
+];
+const CELL_LABELS = { book:'Booked', couple:'Couple', hold:'Hold', '':'' };
+
+const CLIENTS = [
+  { name: 'Aisha Kembabazi', phone: '+256 772 xxx 118', email: 'aisha.k@gmail.com', tier: 'Gold', visits: 24, last: '12 Mar', spend: 3120000, joined: 'Jan 2024', fav: 'Nanono Desire',
+    prefs: ['Medium pressure','Lavender oil','Quiet room','Afternoon slots'], allergies: 'Sensitive to citrus oils', points: 480,
+    notes: 'Prefers Nanono. Celebrates birthday 14 Aug — offer spa day.',
+    history: [['12 Mar','Swedish Massage 60min','Nanono D.',180000],['26 Feb','Facial · Hydrating','Sarah A.',150000],['10 Feb','Swedish Massage 60min','Nanono D.',180000],['24 Jan','Classic Pedicure','Winnie',90000]],
+    upcoming: [['Fri 21 Mar · 09:00','Swedish Massage 60min','Lavender']] },
+  { name: 'Ruth Owembabazi', phone: '+256 701 xxx 442', email: 'ruth.owe@gmail.com', tier: 'Platinum', visits: 41, last: '18 Mar', spend: 6480000, joined: 'Mar 2023', fav: 'Kirabo Sophie',
+    prefs: ['Couples ritual','Warm towels','Champagne add-on'], allergies: 'None on file', points: 920,
+    notes: 'Frequently books couples with partner David. VIP — comp welcome drink.',
+    history: [['18 Mar','Couples Aroma Ritual','Kirabo S.',420000],['02 Mar','Full Body Scrub','Bukirwa R.',200000],['15 Feb','Couples Aroma Ritual','Kirabo S.',420000]],
+    upcoming: [['Sat 22 Mar · 15:00','Couples Aroma Ritual','Lotus']] },
+  { name: 'Sylvia Nakato', phone: '+256 758 xxx 903', email: 'sylvia.n@gmail.com', tier: 'Silver', visits: 11, last: '05 Mar', spend: 1240000, joined: 'Jun 2024', fav: 'Winnie',
+    prefs: ['Shellac only','No cuticle cutting'], allergies: 'None on file', points: 180,
+    notes: 'Nail bar regular. Likes to rebook 3 weeks out.',
+    history: [['05 Mar','Shellac Manicure','Winnie',120000],['12 Feb','Classic Pedicure','Winnie',90000],['22 Jan','Shellac Manicure','Winnie',120000]],
+    upcoming: [] },
+  { name: 'Brian Ssemwezi', phone: '+256 782 xxx 771', email: 'brian.ssem@gmail.com', tier: 'Gold', visits: 19, last: '20 Mar', spend: 2760000, joined: 'Sep 2023', fav: 'Grace Akiteng',
+    prefs: ['Deep tissue','Strong pressure','Focus: shoulders'], allergies: 'None on file', points: 410,
+    notes: 'Recovering from sports injury — avoid lower back.',
+    history: [['20 Mar','Deep Tissue 60min','Grace A.',200000],['06 Mar','Deep Tissue 60min','Grace A.',200000],['20 Feb','Sports Massage','Grace A.',220000]],
+    upcoming: [['Mon 24 Mar · 17:30','Deep Tissue 60min','Bamboo']] },
+  { name: 'Patricia Ameso', phone: '+256 774 xxx 205', email: 'patricia.a@gmail.com', tier: 'New', visits: 1, last: '21 Mar', spend: 250000, joined: 'Mar 2026', fav: '—',
+    prefs: ['First visit'], allergies: 'To be confirmed at consultation', points: 25,
+    notes: 'New client — completed consultation form. Follow up for feedback.',
+    history: [['21 Mar','Egyptian Hammam','Bukirwa R.',250000]],
+    upcoming: [] },
+  { name: 'Joel Muwanga', phone: '+256 700 xxx 617', email: 'joel.m@gmail.com', tier: 'Silver', visits: 8, last: '28 Feb', spend: 940000, joined: 'Nov 2024', fav: 'Najjemba Harriet',
+    prefs: ['Evening slots','Aromatherapy'], allergies: 'None on file', points: 140,
+    notes: 'Books mostly weekends. Interested in membership.',
+    history: [['28 Feb','Aromatherapy 60min','Najjemba H.',190000],['08 Feb','Swedish Massage 60min','Najjemba H.',180000]],
+    upcoming: [] },
+  { name: 'Diana Kirabo', phone: '+256 752 xxx 388', email: 'diana.k@gmail.com', tier: 'Gold', visits: 22, last: '15 Mar', spend: 2980000, joined: 'Feb 2024', fav: 'Karungi Hellen',
+    prefs: ['Keratin treatments','Salon lounge seat'], allergies: 'None on file', points: 460,
+    notes: 'Salon-side regular. Loyal to Karungi for hair.',
+    history: [['15 Mar','Keratin 72 · Medium','Karungi H.',250000],['20 Feb','Full Head Colour','Karungi H.',100000],['30 Jan','Keratin 72 · Medium','Karungi H.',250000]],
+    upcoming: [['Wed 26 Mar · 14:45','Full Head Colour','Orchid']] },
+];
+
+const KPIS = [
+  { label: 'Revenue Today', value: '4.24M', delta: '▲ 12% vs yesterday', deltaColor: '#5a7a52' },
+  { label: 'Appointments', value: '38', delta: '6 walk-ins · 4 no-shows', deltaColor: '#9a9488' },
+  { label: 'Room Occupancy', value: '74%', delta: '15 rooms · 2 floors', deltaColor: '#9a9488' },
+  { label: 'New Clients', value: '6', delta: '▲ this week', deltaColor: '#5a7a52' },
+];
+const TODAY = [
+  { time: '09:00', guest: 'Aisha Kembabazi', treatment: 'Swedish Massage 60min', room: 'Lavender', therapist: 'Nanono Desire', dot: '#6a8168' },
+  { time: '10:15', guest: 'David & Ruth O.', treatment: 'Couples Aroma Ritual', room: 'Lotus', therapist: 'Kirabo Sophie', dot: '#c9a2a8' },
+  { time: '11:30', guest: 'Sylvia Nakato', treatment: 'Shellac Manicure', room: 'Jasmine', therapist: 'Winnie', dot: '#c9b491' },
+  { time: '13:00', guest: 'Brian Ssemwezi', treatment: 'Deep Tissue 60min', room: 'Bamboo', therapist: 'Grace Akiteng', dot: '#6a8168' },
+  { time: '14:45', guest: 'Patricia Ameso', treatment: 'Egyptian Hammam', room: 'Hammam', therapist: 'Bukirwa Rose', dot: '#6a8168' },
+];
+const ON_SHIFT = [
+  { name: 'Nanono Desire', role: 'Therapist', shift: 'Morning', initials: 'ND' },
+  { name: 'Beatrice', role: 'Receptionist', shift: 'Morning', initials: 'BE' },
+  { name: 'Grace Akiteng', role: 'Therapist', shift: 'Middle', initials: 'GA' },
+  { name: 'Winnie', role: 'Nail technician', shift: 'Middle', initials: 'WI' },
+  { name: 'Kirabo Sophie', role: 'Therapist', shift: 'Evening', initials: 'KS' },
+];
+const LOW_STOCK = [
+  { name: 'Massage Oil (Lavender)', left: 4 },
+  { name: 'Shellac Top Coat', left: 2 },
+  { name: 'Bath Towels (L)', left: 9 },
+];
+const SALES_COLS = ['Guest','Treatment','Amount','Receipt','Room','Time in','Time out','Therapist'];
+const SALES = [
+  { guest: 'Aisha K.', treatment: 'Swedish Massage 60min', amount: CUR+' 180,000', receipt: 'RC-4821', room: 'Lavender', tin: '09:00', tout: '10:05', therapist: 'Nanono D.' },
+  { guest: 'David & Ruth O.', treatment: 'Couples Aroma Ritual', amount: CUR+' 420,000', receipt: 'RC-4822', room: 'Lotus', tin: '10:15', tout: '11:35', therapist: 'Kirabo S.' },
+  { guest: 'Sylvia N.', treatment: 'Shellac Manicure', amount: CUR+' 120,000', receipt: 'RC-4823', room: 'Jasmine', tin: '11:30', tout: '12:20', therapist: 'Winnie' },
+  { guest: 'Brian S.', treatment: 'Deep Tissue 60min', amount: CUR+' 200,000', receipt: 'RC-4824', room: 'Bamboo', tin: '13:00', tout: '14:05', therapist: 'Grace A.' },
+  { guest: 'Patricia A.', treatment: 'Egyptian Hammam', amount: CUR+' 250,000', receipt: 'RC-4825', room: 'Hammam', tin: '14:45', tout: '16:00', therapist: 'Bukirwa R.' },
+  { guest: 'Diana K.', treatment: 'Keratin 72 · Medium', amount: CUR+' 250,000', receipt: 'RC-4826', room: 'Orchid', tin: '15:10', tout: '16:40', therapist: 'Karungi H.' },
+];
+const PAYMENTS = [
+  { name: 'Mobile Money', pct: 46 }, { name: 'Credit / Debit Card', pct: 24 },
+  { name: 'Pesapal', pct: 18 }, { name: 'Digital Wallet', pct: 12 },
+];
+const PRODUCTS = [
+  { name: 'Massage Oil · Lavender', cat: 'Consumable', stock: '4 btl', status: 'Reorder' },
+  { name: 'Shellac Top Coat', cat: 'Nail bar', stock: '2 btl', status: 'Reorder' },
+  { name: 'Keratin 72 Solution', cat: 'Salon', stock: '6 btl', status: 'Low' },
+  { name: 'Body Scrub · Coffee', cat: 'Consumable', stock: '18 tub', status: 'OK' },
+  { name: 'Facial Cleanser', cat: 'Consumable', stock: '22 btl', status: 'OK' },
+  { name: 'Hair Relaxer · Affirm', cat: 'Salon', stock: '9 kit', status: 'Low' },
+  { name: 'Cotton Rounds', cat: 'Consumable', stock: '40 pk', status: 'OK' },
+];
+const EQUIPMENT = [
+  { name: 'Massage Beds', count: 15, cond: 'Good', color: '#5a7a52' },
+  { name: 'Hammam Table', count: 1, cond: 'Good', color: '#5a7a52' },
+  { name: 'Steam Cabin', count: 2, cond: 'Service due', color: '#b06a2a' },
+  { name: 'Bath Towels (L)', count: 9, cond: 'Low', color: '#b06a2a' },
+  { name: 'Robes', count: 34, cond: 'Good', color: '#5a7a52' },
+  { name: 'Nail Stations', count: 4, cond: 'Good', color: '#5a7a52' },
+];
+const SHIFTS = [
+  { name: 'Morning Shift', time: '6:00am – 3:00pm', people: ['Nanono Desire','Beatrice (Rec.)','Muhunza Nana','Najjemba Harriet','Karungi Hellen'] },
+  { name: 'Middle Shift', time: '10:00am – 7:00pm', people: ['Grace Akiteng','Anita (Rec.)','Winnie','Kirabo Sophie','Faheem'] },
+  { name: 'Evening Shift', time: '12:00pm – 9:30pm', people: ['Bukirwa Rose','Olivia (Rec.)','Sarah Amanya','Kamulegeya Daniel','Mahoro Robina'] },
+];
+const CAMPAIGNS = [
+  { channel: 'Email', status: 'Live', name: 'March Glow Package', desc: '20% off all facials + free scrub upgrade this month.', stat: 'Sent 842 · 31% opened' },
+  { channel: 'SMS', status: 'Scheduled', name: 'Appointment Reminders', desc: 'Auto reminder 24h before each booking to cut no-shows.', stat: 'Next batch 6:00pm' },
+  { channel: 'Loyalty', status: 'Draft', name: 'Refer-a-Friend', desc: 'Both client and referral earn 15,000 credit.', stat: 'Launching April' },
+];
+const LOYALTY = [
+  { tier: 'Silver', rule: '5+ visits', reward: '5% off' },
+  { tier: 'Gold', rule: '15+ visits', reward: '10% + free add-on' },
+  { tier: 'Platinum', rule: '30+ visits', reward: '15% + birthday spa day' },
+  { tier: 'Gift Vouchers', rule: 'Redeemable any service', reward: 'From 50,000' },
+];
+const SOCIAL = [
+  { platform: 'Instagram', reach: '12.4k followers' },
+  { platform: 'Facebook', reach: '8.1k followers' },
+  { platform: 'WhatsApp Business', reach: '3.2k contacts' },
+];
+const REVENUE_BARS = [
+  { day: 'Mon', val: 3120, h: 55 }, { day: 'Tue', val: 2980, h: 52 }, { day: 'Wed', val: 3640, h: 64 },
+  { day: 'Thu', val: 4110, h: 72 }, { day: 'Fri', val: 4240, h: 76 }, { day: 'Sat', val: 5680, h: 100 }, { day: 'Sun', val: 4820, h: 85 },
+];
+const TOP_SERVICES = [
+  { name: 'Swedish Massage', count: 128, pct: 100 }, { name: 'Classic Pedicure', count: 96, pct: 75 },
+  { name: 'Deep Tissue', count: 81, pct: 63 }, { name: 'Braiding', count: 64, pct: 50 }, { name: 'Facials', count: 52, pct: 41 },
+];
+const TRENDS = [
+  { label: 'Avg. spend / visit', value: CUR+' 142k' }, { label: 'Repeat client rate', value: '68%' },
+  { label: 'Peak day', value: 'Saturday' }, { label: 'Busiest room', value: 'Lavender' },
+];
+const REPORTS = [
+  { scope: 'Spa · Sales', name: 'Daily & Periodical Sales', desc: 'Revenue by day, week and month across all services and rooms.', tagColor: '#5a6f57' },
+  { scope: 'Marketing', name: 'Promotion Report', desc: 'Uptake, redemptions and ROI of each active promotion.', tagColor: '#b08d57' },
+  { scope: 'Spa · Services', name: 'Service Performance', desc: 'Revenue and volume per treatment; top and slow movers.', tagColor: '#5a6f57' },
+  { scope: 'HR', name: 'Staff Performance', desc: 'Individual sales, hours and client ratings per therapist.', tagColor: '#5a6b8a' },
+  { scope: 'CRM', name: 'Clients & Database', desc: 'Full client base with loyalty tiers and visit history.', tagColor: '#5a6b8a' },
+  { scope: 'Gym & Spa', name: 'Inventory Report', desc: 'Stock levels, usage and reorder log for spa and gym.', tagColor: '#b06a2a' },
+];
+const GYM_KPIS = [
+  { label: 'Active Members', value: '214' }, { label: 'Day Passes', value: '18' },
+  { label: 'Classes Today', value: '6' }, { label: 'Renewals Due', value: '11' },
+];
+const GYM_CLASSES = [
+  { time: '06:30', name: 'Morning HIIT', trainer: 'Coach Ivan', day: 'Mon · Wed · Fri' },
+  { time: '08:00', name: 'Yoga Flow', trainer: 'Coach Ritah', day: 'Daily' },
+  { time: '12:30', name: 'Spin', trainer: 'Coach Ivan', day: 'Tue · Thu' },
+  { time: '17:30', name: 'Strength Circuit', trainer: 'Coach Musa', day: 'Mon–Fri' },
+  { time: '18:30', name: 'Pilates', trainer: 'Coach Ritah', day: 'Mon · Wed' },
+  { time: '19:30', name: 'Zumba', trainer: 'Coach Nina', day: 'Tue · Thu · Sat' },
+];
+const GYM_RATES = [
+  { plan: 'Monthly Membership', price: CUR+' 200,000' }, { plan: 'Quarterly', price: CUR+' 500,000' },
+  { plan: 'Annual', price: CUR+' 1,600,000' }, { plan: 'Day Pass', price: CUR+' 30,000' },
+  { plan: 'Couples Monthly', price: CUR+' 350,000' },
+];
+const HOURS = ['09:00','11:00','13:00','15:00','17:00','19:00'];
+const BK_DAYS = ['Fri 21','Sat 22','Sun 23','Mon 24','Tue 25','Wed 26'];
+const BK_TIMES = ['09:00','10:15','11:30','13:00','14:45','16:00','17:30','18:45'];
+const BK_THERAPISTS = ['Nanono Desire','Grace Akiteng','Bukirwa Rose','Kirabo Sophie','Najjemba Harriet','Sarah Amanya'];
+const BK_ROOMS = ['Lily','Orchid','Rose','Lavender','Lotus (couple)','Bamboo','Jasmine','Hammam'];
+const BK_PAYMENTS = ['Mobile Money','Credit / Debit Card','Pesapal','Digital Wallet','Pay at desk'];
+const BK_STEP_LABELS = ['Service','Date & Time','Therapist & Room','Client','Confirm'];
+
+/* ---------------------------- STYLE HELPERS -------------------------- */
+function tierBadge(t) {
+  const map = { Gold: '#b08d57;background:#faf1e2', Silver: '#7d7d7d;background:#f0f0f0', Platinum: '#5a6f57;background:#e9efe6', New: '#9a9488;background:#f2f0ea' };
+  return "font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;color:#" + (map[t] || map.New);
+}
+function statusBadge(s) {
+  const c = s === 'Reorder' ? '#b06a2a;background:#fbeede' : s === 'Low' ? '#a8862a;background:#f8f1dc' : '#5a6f57;background:#e9efe6';
+  return "font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;color:#" + c;
+}
+function campBadge(s) {
+  const c = s === 'Live' ? '#5a6f57;background:#e9efe6' : s === 'Scheduled' ? '#5a6b8a;background:#e6ebf3' : '#9a9488;background:#f2f0ea';
+  return "font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:20px;color:#" + c;
+}
+function cellStyle(kind) {
+  const base = "border-radius:7px;padding:6px 4px;font-size:10.5px;font-weight:600;display:flex;align-items:center;justify-content:center;min-height:34px;text-align:center;line-height:1.15;";
+  const map = {
+    '': "background:#f6f4ee;color:transparent;",
+    book: "background:#e7efe4;color:#4a6248;border:1px solid #d3e2ce;",
+    couple: "background:#f6e9ec;color:#9a5d68;border:1px solid #ecd6db;",
+    hold: "background:#f4efe2;color:#8a7742;border:1px solid #e8dcc0;",
+  };
+  return base + (map[kind] || map['']);
+}
+function roomChip(label) {
+  const couple = label.endsWith('*');
+  const name = couple ? label.slice(0, -1) : label;
+  const s = "font-size:12px;padding:5px 11px;border-radius:20px;border:1px solid " + (couple ? '#ecd6db;background:#faf1f3;color:#9a5d68' : '#e2ddd3;background:#f7f5f0;color:#4a4740') + ";";
+  return '<span style="'+s+'">'+esc(name)+'</span>';
+}
+function navStyle(active) {
+  return "display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 12px;border:none;border-radius:9px;cursor:pointer;font:500 13.5px/1.2 'Instrument Sans',sans-serif;"
+    + (active ? "background:rgba(201,180,145,.16);color:#f3ede0;" : "background:transparent;color:#aab2a6;");
+}
+function tabStyle(on) {
+  return "padding:6px 15px;border:none;border-radius:8px;cursor:pointer;font:600 12.5px 'Instrument Sans',sans-serif;"
+    + (on ? "background:#fff;color:#3f5340;box-shadow:0 1px 3px rgba(0,0,0,.08);" : "background:transparent;color:#9a9488;");
+}
+function branchStyle(on) {
+  return "padding:6px 13px;border:none;border-radius:8px;cursor:pointer;font:600 12.5px 'Instrument Sans',sans-serif;"
+    + (on ? "background:#3f5340;color:#fff;" : "background:transparent;color:#9a9488;");
+}
+function optStyle(on) {
+  return "width:100%;text-align:left;padding:12px 15px;border-radius:12px;cursor:pointer;font:500 13.5px 'Instrument Sans',sans-serif;display:flex;justify-content:space-between;align-items:center;gap:10px;"
+    + (on ? "border:1.5px solid #3f5340;background:#eef2ec;color:#26302a;" : "border:1px solid #e2ddd3;background:#fff;color:#4a4740;");
+}
+function chipStyle(on) {
+  return "padding:9px 15px;border-radius:10px;cursor:pointer;font:600 13px 'Instrument Sans',sans-serif;white-space:nowrap;"
+    + (on ? "border:1.5px solid #3f5340;background:#3f5340;color:#fff;" : "border:1px solid #e2ddd3;background:#fff;color:#4a4740;");
+}
+function mTabStyle(on) {
+  return "flex:1;padding:8px;border:none;background:transparent;cursor:pointer;font:600 12px 'Instrument Sans',sans-serif;border-radius:10px;" + (on ? "color:#3f5340;background:#eef1ea;" : "color:#a8a396;");
+}
+
+/* card wrapper */
+const CARD = 'background:#fff;border:1px solid #e7e3da;border-radius:16px;';
+
+/* ---------------------------- HANDLERS (App) ------------------------- */
+const App = {
+  setDevice(d){ S.device = d; render(); },
+  setBranch(b){ S.branch = b; render(); },
+  setModule(m){ S.activeModule = m; S.clientView = null; render(); },
+  openClient(i){ S.clientView = i; render(); },
+  closeClient(){ S.clientView = null; render(); },
+  moduleAction(){ if (S.activeModule==='dashboard' || S.activeModule==='appointments') App.openBooking(); },
+  // mobile
+  goM(scr){ S.mScreen = scr; render(); },
+  // booking
+  openBooking(){ Object.assign(S, { bkOpen:true, bkStep:1, bkDone:false, bkService:null, bkDay:0, bkTime:null, bkTherapist:null, bkRoom:null, bkClient:'', bkPhone:'', bkPayment:null, bkReminder:true, _focus:null }); render(); },
+  closeBooking(){ S.bkOpen = false; S._focus = null; render(); },
+  bkCanNext(){
+    return [null, S.bkService!==null, S.bkTime!==null, (S.bkTherapist!==null && S.bkRoom!==null),
+      (S.bkClient.trim()!=='' && S.bkPhone.trim()!==''), S.bkPayment!==null][S.bkStep];
+  },
+  bkNext(){ if (S.bkStep===5){ if (App.bkCanNext()) { S.bkDone=true; render(); } return; } if (App.bkCanNext()){ S.bkStep=Math.min(5,S.bkStep+1); S._focus=null; render(); } },
+  bkBack(){ S.bkStep=Math.max(1,S.bkStep-1); S._focus=null; render(); },
+  pickService(i){ S.bkService=i; render(); },
+  pickDay(i){ S.bkDay=i; render(); },
+  pickTime(t){ S.bkTime=t; render(); },
+  pickTherapist(n){ S.bkTherapist=n; render(); },
+  pickRoom(r){ S.bkRoom=r; render(); },
+  pickPayment(p){ S.bkPayment=p; render(); },
+  setField(f, v, id){ S[f]=v; S._focus=id; App.refreshNextBtn(); },
+  toggleReminder(){ S.bkReminder=!S.bkReminder; render(); },
+  refreshNextBtn(){
+    const btn = document.getElementById('bkNextBtn');
+    if (btn){ const ok = App.bkCanNext(); btn.setAttribute('style', bkNextBtnStyle(ok)); }
+  },
+};
+
+function bkNextBtnStyle(ok){
+  return "padding:11px 22px;border:none;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;"
+    + (ok ? "background:#3f5340;color:#fff;" : "background:#d8d3c8;color:#a8a396;cursor:not-allowed;");
+}
+
+/* ============================ VIEWS ================================== */
+
+function topBar(){
+  const brand = 'The Calabash ' + S.branch;
+  const branches = BRANCHES.map(b =>
+    `<button onclick="App.setBranch('${b}')" style="${branchStyle(S.branch===b)}">${b}</button>`).join('');
+  return `
+  <div style="width:100%;background:#fbfaf7;border-bottom:1px solid #e2ddd3;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:20;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div style="width:34px;height:34px;border-radius:50%;background:#20261f;display:flex;align-items:center;justify-content:center;color:#c9b491;font-family:'Cormorant Garamond',serif;font-weight:700;font-size:19px;">C</div>
+      <div style="line-height:1.05;">
+        <div class="serif" style="font-weight:600;font-size:19px;color:#2a2824;letter-spacing:.2px;">${esc(brand)}</div>
+        <div style="font-size:10.5px;letter-spacing:2.2px;text-transform:uppercase;color:#9a9488;">Spa &amp; Salon · Management Suite</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:18px;">
+      <div style="display:flex;background:#f0ede6;border:1px solid #e2ddd3;border-radius:10px;padding:3px;gap:2px;">
+        <button onclick="App.setDevice('desktop')" style="${tabStyle(S.device==='desktop')}">Desktop</button>
+        <button onclick="App.setDevice('mobile')" style="${tabStyle(S.device==='mobile')}">Mobile</button>
+      </div>
+      <div style="display:flex;background:#f0ede6;border:1px solid #e2ddd3;border-radius:10px;padding:3px;gap:2px;">${branches}</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="text-align:right;line-height:1.15;">
+          <div style="font-size:13px;font-weight:600;color:#2a2824;">Lucy Mitambo</div>
+          <div style="font-size:11px;color:#9a9488;">Health Club Manager</div>
+        </div>
+        <div style="width:36px;height:36px;border-radius:50%;background:#c9b491;color:#4a3f2a;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:14px;">LM</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function sidebar(){
+  const section = (label, items) => `
+    <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#6f7a6c;padding:${label==='Operations'?'6px':'14px'} 12px 4px;">${label}</div>
+    ${items.map(([key,lbl]) => `<button onclick="App.setModule('${key}')" style="${navStyle(S.activeModule===key)}">${esc(lbl)}</button>`).join('')}`;
+  return `
+    <div style="width:236px;flex-shrink:0;background:#20261f;min-height:calc(100vh - 60px);padding:22px 14px;display:flex;flex-direction:column;gap:4px;position:sticky;top:60px;height:calc(100vh - 60px);overflow:auto;">
+      ${section('Operations', NAV.Operations)}
+      ${section('Finance', NAV.Finance)}
+      ${section('Growth', NAV.Growth)}
+      ${section('Facilities', NAV.Facilities)}
+      <div style="margin-top:auto;padding:14px 12px 4px;border-top:1px solid rgba(255,255,255,.07);">
+        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">March 2026 · v1.0</span></div>
+      </div>
+    </div>`;
+}
+
+function moduleHeader(){
+  const t = TITLES[S.activeModule] || TITLES.dashboard;
+  const sub = S.activeModule==='dashboard' ? (t[1] + ' · ' + S.branch + ' branch') : t[1];
+  return `
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap;gap:12px;">
+      <div>
+        <div class="serif" style="font-weight:600;font-size:30px;color:#26302a;line-height:1;">${esc(t[0])}</div>
+        <div style="font-size:13px;color:#8f897e;margin-top:6px;">${esc(sub)}</div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button style="padding:9px 15px;border:1px solid #ddd7cb;background:#fff;border-radius:10px;font:500 13px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">Export</button>
+        <button onclick="App.moduleAction()" style="padding:9px 16px;border:none;background:#3f5340;border-radius:10px;font:600 13px 'Instrument Sans',sans-serif;color:#fff;cursor:pointer;">${esc(t[2])}</button>
+      </div>
+    </div>`;
+}
+
+/* -- Dashboard -- */
+function viewDashboard(){
+  const kpis = KPIS.map(k => `
+    <div style="${CARD}padding:18px 18px 16px;">
+      <div style="font-size:12px;color:#9a9488;text-transform:uppercase;letter-spacing:.8px;">${esc(k.label)}</div>
+      <div class="serif" style="font-weight:600;font-size:34px;color:#26302a;line-height:1.1;margin-top:6px;">${esc(k.value)}</div>
+      <div style="font-size:12px;color:${k.deltaColor};margin-top:4px;">${esc(k.delta)}</div>
+    </div>`).join('');
+  const sched = TODAY.map(a => `
+    <div style="display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid #f0ede6;">
+      <div style="font-size:13px;font-weight:600;color:#3f5340;width:52px;">${esc(a.time)}</div>
+      <div style="width:8px;height:8px;border-radius:50%;background:${a.dot};flex-shrink:0;"></div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13.5px;font-weight:500;color:#2a2824;">${esc(a.guest)}</div>
+        <div style="font-size:12px;color:#9a9488;">${esc(a.treatment)}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:12.5px;color:#4a4740;">${esc(a.room)}</div>
+        <div style="font-size:11.5px;color:#9a9488;">${esc(a.therapist)}</div>
+      </div>
+    </div>`).join('');
+  const shift = ON_SHIFT.map(s => `
+    <div style="display:flex;align-items:center;gap:10px;padding:7px 0;">
+      <div style="width:30px;height:30px;border-radius:50%;background:#eae4d7;color:#7a6f57;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">${esc(s.initials)}</div>
+      <div style="flex:1;"><div style="font-size:13px;color:#2a2824;">${esc(s.name)}</div><div style="font-size:11px;color:#9a9488;">${esc(s.role)}</div></div>
+      <div style="font-size:11px;color:#6a8168;">${esc(s.shift)}</div>
+    </div>`).join('');
+  const low = LOW_STOCK.map(p => `
+    <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px;">
+      <span style="color:#5c4a33;">${esc(p.name)}</span><span style="color:#b06a2a;font-weight:600;">${p.left} left</span>
+    </div>`).join('');
+  return `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:18px;">${kpis}</div>
+    <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:16px;">
+      <div style="${CARD}padding:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div style="font-weight:600;font-size:15px;color:#26302a;">Today's Schedule</div>
+          <div style="font-size:12px;color:#8f897e;">Fri · 21 March 2026</div>
+        </div>${sched}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="${CARD}padding:20px;">
+          <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">On Shift Now</div>${shift}
+        </div>
+        <div style="background:#fff5ec;border:1px solid #f0dcc4;border-radius:16px;padding:18px;">
+          <div style="font-weight:600;font-size:14px;color:#8a5a24;margin-bottom:10px;">Low Stock Alerts</div>${low}
+        </div>
+      </div>
+    </div>`;
+}
+
+/* -- Appointments -- */
+function viewAppointments(){
+  const head = HOURS.map(h => `<div style="font-size:11px;color:#9a9488;text-align:center;padding:4px;">${esc(h)}</div>`).join('');
+  const rows = SCHED.map(r => {
+    const cells = r.cells.map(k => `<div style="${cellStyle(k)}">${esc(CELL_LABELS[k]||'')}</div>`).join('');
+    return `<div style="font-size:12.5px;font-weight:500;color:#3f5340;padding:8px 4px;display:flex;align-items:center;">${esc(r.room)}</div>${cells}`;
+  }).join('');
+  const menu = MENU.map(m => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0ede6;">
+      <span style="font-size:13px;color:#2a2824;">${esc(m.name)}</span>
+      <span style="font-size:12.5px;color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(m.price)}</span>
+    </div>`).join('');
+  return `
+    <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;">
+      <div style="${CARD}padding:20px;overflow:auto;">
+        <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:16px;">Room Schedule Board · Floor 1</div>
+        <div style="display:grid;grid-template-columns:110px repeat(6,1fr);gap:6px;min-width:640px;">
+          <div style="font-size:11px;color:#9a9488;padding:4px;">Room</div>${head}${rows}
+        </div>
+      </div>
+      <div style="${CARD}padding:20px;">
+        <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:4px;">Service Menu</div>
+        <div style="font-size:12px;color:#9a9488;margin-bottom:12px;">Quick-add pricing (${CUR})</div>${menu}
+      </div>
+    </div>`;
+}
+
+/* -- Clients -- */
+function viewClients(){
+  if (S.clientView !== null) return viewClientProfile(CLIENTS[S.clientView]);
+  const th = (t, extra='') => `<th style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;font-weight:600;padding:8px 6px;${extra}">${t}</th>`;
+  const rows = CLIENTS.map((c, i) => `
+    <tr class="client-row" onclick="App.openClient(${i})" style="border-top:1px solid #f0ede6;cursor:pointer;">
+      <td style="padding:12px 6px;font-size:13.5px;color:#2a2824;font-weight:500;">${esc(c.name)}</td>
+      <td style="padding:12px 6px;font-size:13px;color:#6b665d;">${esc(c.phone)}</td>
+      <td style="padding:12px 6px;"><span style="${tierBadge(c.tier)}">${esc(c.tier)}</span></td>
+      <td style="padding:12px 6px;font-size:13px;color:#6b665d;">${c.visits}</td>
+      <td style="padding:12px 6px;font-size:13px;color:#6b665d;">${esc(c.last)}</td>
+      <td style="padding:12px 6px;font-size:13px;color:#3f5340;font-weight:600;">${esc(fmt(c.spend))}</td>
+    </tr>`).join('');
+  return `
+    <div style="${CARD}padding:8px 20px 16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;">
+        <div style="background:#f4f1ea;border:1px solid #e7e3da;border-radius:10px;padding:8px 14px;font-size:13px;color:#9a9488;width:280px;">Search clients…</div>
+        <div style="font-size:12px;color:#8f897e;">1,284 clients · 312 loyalty members</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr style="text-align:left;">${th('Client')}${th('Phone')}${th('Loyalty')}${th('Visits')}${th('Last visit')}${th('Total spend')}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function viewClientProfile(c){
+  const prefs = c.prefs.map(p => `<span style="font-size:12px;padding:5px 11px;border-radius:20px;background:#eef2ec;color:#3f5340;border:1px solid #dce6d8;">${esc(p)}</span>`).join('');
+  const upcoming = c.upcoming.length ? c.upcoming.map(u => `
+      <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid #f0ede6;">
+        <div style="width:9px;height:9px;border-radius:50%;background:#6a8168;flex-shrink:0;"></div>
+        <div style="flex:1;"><div style="font-size:13.5px;color:#2a2824;font-weight:500;">${esc(u[1])}</div><div style="font-size:12px;color:#9a9488;">${esc(u[0])}</div></div>
+        <div style="font-size:12.5px;color:#4a4740;">${esc(u[2])}</div>
+      </div>`).join('')
+    : `<div style="font-size:13px;color:#9a9488;padding:6px 0;">No upcoming appointments. <a href="#" onclick="App.openBooking();return false;">Book one →</a></div>`;
+  const history = c.history.map(h => `
+      <tr style="border-top:1px solid #f0ede6;">
+        <td style="padding:10px 6px;font-size:13px;color:#6b665d;">${esc(h[0])}</td>
+        <td style="padding:10px 6px;font-size:13px;color:#2a2824;">${esc(h[1])}</td>
+        <td style="padding:10px 6px;font-size:13px;color:#6b665d;">${esc(h[2])}</td>
+        <td style="padding:10px 6px;font-size:13px;color:#3f5340;font-weight:600;text-align:right;">${esc(fmt(h[3]))}</td>
+      </tr>`).join('');
+  const statCard = (lbl, val, sz=30) => `<div style="${CARD}padding:18px;"><div style="font-size:11px;color:#9a9488;text-transform:uppercase;letter-spacing:.7px;">${lbl}</div><div class="serif" style="font-weight:600;font-size:${sz}px;color:#26302a;margin-top:${sz===24?'6px':'4px'};">${val}</div></div>`;
+  return `
+    <button onclick="App.closeClient()" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid #ddd7cb;background:#fff;border-radius:10px;font:600 12.5px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;margin-bottom:16px;">← All clients</button>
+    <div style="display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start;">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="${CARD}padding:22px;text-align:center;">
+          <div class="serif" style="width:72px;height:72px;border-radius:50%;background:#eae4d7;color:#7a6f57;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:600;margin:0 auto 12px;">${esc(initials(c.name))}</div>
+          <div class="serif" style="font-size:23px;color:#26302a;line-height:1.1;">${esc(c.name)}</div>
+          <div style="margin-top:8px;"><span style="${tierBadge(c.tier)}">${esc(c.tier)} member</span></div>
+          <div style="border-top:1px solid #f0ede6;margin-top:16px;padding-top:14px;display:flex;flex-direction:column;gap:9px;text-align:left;">
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Phone</span><span style="color:#2a2824;">${esc(c.phone)}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Email</span><span style="color:#2a2824;">${esc(c.email)}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Client since</span><span style="color:#2a2824;">${esc(c.joined)}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Favourite</span><span style="color:#2a2824;">${esc(c.fav)}</span></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px;">
+            <button onclick="App.openBooking()" style="flex:1;padding:10px;border:none;background:#3f5340;border-radius:10px;font:600 13px 'Instrument Sans',sans-serif;color:#fff;cursor:pointer;">Book</button>
+            <button style="flex:1;padding:10px;border:1px solid #ddd7cb;background:#fff;border-radius:10px;font:600 13px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">Message</button>
+          </div>
+        </div>
+        <div style="background:#26302a;border-radius:16px;padding:20px;color:#e9ede6;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;">
+            <div><div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#9fb09b;">Loyalty points</div><div class="serif" style="font-size:32px;margin-top:2px;">${c.points}</div></div>
+            <div style="text-align:right;"><div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#9fb09b;">Lifetime spend</div><div style="font-size:15px;font-weight:600;margin-top:6px;">${esc(fmt(c.spend))}</div></div>
+          </div>
+        </div>
+        <div style="${CARD}padding:20px;">
+          <div style="font-weight:600;font-size:14px;color:#26302a;margin-bottom:12px;">Preferences</div>
+          <div style="display:flex;flex-wrap:wrap;gap:7px;">${prefs}</div>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid #f0ede6;">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#b06a2a;margin-bottom:4px;">Allergies / notes</div>
+            <div style="font-size:12.5px;color:#5c4a33;line-height:1.5;">${esc(c.allergies)}</div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
+          ${statCard('Total visits', c.visits)}${statCard('Lifetime spend', esc(fmt(c.spend)), 24)}${statCard('Points', c.points)}
+        </div>
+        <div style="${CARD}padding:20px;">
+          <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Upcoming appointments</div>${upcoming}
+        </div>
+        <div style="${CARD}padding:8px 20px 16px;">
+          <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">Service history</div>
+          <table style="width:100%;border-collapse:collapse;">
+            <thead><tr>
+              <th style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:6px 6px;text-align:left;">Date</th>
+              <th style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:6px 6px;text-align:left;">Treatment</th>
+              <th style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:6px 6px;text-align:left;">Therapist</th>
+              <th style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:6px 6px;text-align:right;">Amount</th>
+            </tr></thead>
+            <tbody>${history}</tbody>
+          </table>
+        </div>
+        <div style="background:#fff5ec;border:1px solid #f0dcc4;border-radius:16px;padding:18px;">
+          <div style="font-weight:600;font-size:14px;color:#8a5a24;margin-bottom:6px;">Staff notes</div>
+          <div style="font-size:13px;color:#5c4a33;line-height:1.55;">${esc(c.notes)}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* -- Billing -- */
+function viewBilling(){
+  const cols = SALES_COLS.map(c => `<th style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:8px 6px;text-align:left;">${esc(c)}</th>`).join('');
+  const rows = SALES.map(s => `
+    <tr style="border-top:1px solid #f0ede6;">
+      <td style="padding:10px 6px;font-size:13px;color:#2a2824;font-weight:500;">${esc(s.guest)}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(s.treatment)}</td>
+      <td style="padding:10px 6px;font-size:13px;color:#3f5340;font-weight:600;">${esc(s.amount)}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#9a9488;">${esc(s.receipt)}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(s.room)}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(s.tin)}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(s.tout)}</td>
+      <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(s.therapist)}</td>
+    </tr>`).join('');
+  const pays = PAYMENTS.map(p => `
+    <div style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;"><span style="color:#4a4740;">${esc(p.name)}</span><span style="color:#7a6f57;font-weight:600;">${p.pct}%</span></div>
+      <div style="height:7px;background:#f0ede6;border-radius:6px;overflow:hidden;"><div style="height:100%;width:${p.pct}%;background:#6a8168;border-radius:6px;"></div></div>
+    </div>`).join('');
+  return `
+    <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start;">
+      <div style="${CARD}padding:8px 20px 16px;overflow:auto;">
+        <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">Sales Summary Register · Today</div>
+        <table style="width:100%;border-collapse:collapse;min-width:660px;"><thead><tr>${cols}</tr></thead><tbody>${rows}</tbody></table>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="${CARD}padding:20px;">
+          <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:14px;">Payment Methods</div>${pays}
+        </div>
+        <div style="background:#26302a;border-radius:16px;padding:20px;color:#e9ede6;">
+          <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#9fb09b;">Collected today</div>
+          <div class="serif" style="font-weight:600;font-size:34px;margin-top:6px;">${CUR} 4,240,000</div>
+          <div style="font-size:12.5px;color:#9fb09b;margin-top:8px;">42 receipts · 6 pending invoices</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* -- Inventory -- */
+function viewInventory(){
+  const rows = PRODUCTS.map(p => `
+    <tr style="border-top:1px solid #f0ede6;">
+      <td style="padding:11px 6px;font-size:13.5px;color:#2a2824;">${esc(p.name)}</td>
+      <td style="padding:11px 6px;font-size:12.5px;color:#9a9488;">${esc(p.cat)}</td>
+      <td style="padding:11px 6px;font-size:13px;color:#6b665d;">${esc(p.stock)}</td>
+      <td style="padding:11px 6px;"><span style="${statusBadge(p.status)}">${esc(p.status)}</span></td>
+    </tr>`).join('');
+  const th = (t) => `<th style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:8px 6px;text-align:left;">${t}</th>`;
+  const equip = EQUIPMENT.map(e => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f0ede6;">
+      <span style="font-size:13px;color:#2a2824;">${esc(e.name)}</span>
+      <span style="font-size:12.5px;color:#6b665d;">${e.count} · <span style="color:${e.color};">${esc(e.cond)}</span></span>
+    </div>`).join('');
+  return `
+    <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:16px;align-items:start;">
+      <div style="${CARD}padding:8px 20px 16px;">
+        <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">Product Stock</div>
+        <table style="width:100%;border-collapse:collapse;"><thead><tr>${th('Product')}${th('Category')}${th('Stock')}${th('Status')}</tr></thead><tbody>${rows}</tbody></table>
+      </div>
+      <div style="${CARD}padding:20px;">
+        <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Equipment &amp; Linen</div>${equip}
+      </div>
+    </div>`;
+}
+
+/* -- Staff -- */
+function viewStaff(){
+  const shifts = SHIFTS.map(sh => `
+    <div style="${CARD}padding:18px;">
+      <div style="font-weight:600;font-size:14px;color:#26302a;">${esc(sh.name)}</div>
+      <div style="font-size:12px;color:#6a8168;margin:3px 0 12px;">${esc(sh.time)}</div>
+      ${sh.people.map(n => `<div style="font-size:13px;color:#4a4740;padding:4px 0;border-bottom:1px solid #f5f2ec;">${esc(n)}</div>`).join('')}
+    </div>`).join('');
+  const staff = RAW_STAFF.map(([name, role]) => `
+    <tr style="border-top:1px solid #f0ede6;">
+      <td style="padding:9px 6px;width:34px;"><div style="width:28px;height:28px;border-radius:50%;background:#eae4d7;color:#7a6f57;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;">${esc(initials(name))}</div></td>
+      <td style="padding:9px 6px;font-size:13.5px;color:#2a2824;">${esc(name)}</td>
+      <td style="padding:9px 6px;font-size:12.5px;color:#9a9488;text-align:right;">${esc(role)}</td>
+    </tr>`).join('');
+  return `
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">${shifts}</div>
+      <div style="display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start;">
+        <div style="${CARD}padding:8px 20px 16px;">
+          <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">Staff Directory · ${RAW_STAFF.length} members</div>
+          <table style="width:100%;border-collapse:collapse;"><tbody>${staff}</tbody></table>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div style="${CARD}padding:20px;">
+            <div style="font-weight:600;font-size:14px;color:#26302a;margin-bottom:10px;">Rooms · 1st Floor</div>
+            <div style="display:flex;flex-wrap:wrap;gap:7px;">${ROOMS1.map(roomChip).join('')}</div>
+          </div>
+          <div style="${CARD}padding:20px;">
+            <div style="font-weight:600;font-size:14px;color:#26302a;margin-bottom:10px;">Rooms · 2nd Floor</div>
+            <div style="display:flex;flex-wrap:wrap;gap:7px;">${ROOMS2.map(roomChip).join('')}</div>
+            <div style="font-size:11px;color:#9a9488;margin-top:12px;display:flex;align-items:center;gap:6px;"><span style="width:9px;height:9px;border-radius:50%;background:#c9a2a8;display:inline-block;"></span> Couple room</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* -- Marketing -- */
+function viewMarketing(){
+  const camps = CAMPAIGNS.map(c => `
+    <div style="${CARD}padding:18px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><span style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#8f897e;">${esc(c.channel)}</span><span style="${campBadge(c.status)}">${esc(c.status)}</span></div>
+      <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:6px;">${esc(c.name)}</div>
+      <div style="font-size:12.5px;color:#9a9488;line-height:1.5;">${esc(c.desc)}</div>
+      <div style="font-size:12px;color:#6a8168;margin-top:12px;">${esc(c.stat)}</div>
+    </div>`).join('');
+  const loyalty = LOYALTY.map(l => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f0ede6;">
+      <div><div style="font-size:13.5px;color:#2a2824;">${esc(l.tier)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(l.rule)}</div></div>
+      <div style="font-size:13px;color:#3f5340;font-weight:600;">${esc(l.reward)}</div>
+    </div>`).join('');
+  const social = SOCIAL.map(s => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f0ede6;">
+      <span style="font-size:13px;color:#2a2824;">${esc(s.platform)}</span><span style="font-size:12.5px;color:#6b665d;">${esc(s.reach)}</span>
+    </div>`).join('');
+  return `
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">${camps}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Loyalty Rewards</div>${loyalty}</div>
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Social Outreach</div>${social}</div>
+      </div>
+    </div>`;
+}
+
+/* -- Analytics -- */
+function viewAnalytics(){
+  const bars = REVENUE_BARS.map(b => `
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end;">
+      <div style="font-size:11px;color:#7a6f57;font-weight:600;">${b.val}</div>
+      <div style="width:100%;max-width:46px;height:${b.h}%;background:linear-gradient(#7d9179,#5a6f57);border-radius:8px 8px 0 0;"></div>
+      <div style="font-size:11.5px;color:#9a9488;">${esc(b.day)}</div>
+    </div>`).join('');
+  const top = TOP_SERVICES.map(t => `
+    <div style="margin-bottom:13px;">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;"><span style="color:#4a4740;">${esc(t.name)}</span><span style="color:#7a6f57;font-weight:600;">${t.count}</span></div>
+      <div style="height:7px;background:#f0ede6;border-radius:6px;overflow:hidden;"><div style="height:100%;width:${t.pct}%;background:#c9b491;border-radius:6px;"></div></div>
+    </div>`).join('');
+  const trends = TRENDS.map(t => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f0ede6;">
+      <span style="font-size:13px;color:#4a4740;">${esc(t.label)}</span><span style="font-size:14px;color:#3f5340;font-weight:600;">${esc(t.value)}</span>
+    </div>`).join('');
+  return `
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div style="${CARD}padding:22px;">
+        <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:20px;">Revenue · Last 7 days (${CUR} '000)</div>
+        <div style="display:flex;align-items:flex-end;gap:22px;height:200px;padding:0 8px;">${bars}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:14px;">Top Services</div>${top}</div>
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:14px;">Client Trends</div>${trends}</div>
+      </div>
+    </div>`;
+}
+
+/* -- Reports -- */
+function viewReports(){
+  const cards = REPORTS.map(r => `
+    <div style="${CARD}padding:20px;display:flex;flex-direction:column;">
+      <div style="font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:${r.tagColor};">${esc(r.scope)}</div>
+      <div style="font-weight:600;font-size:15.5px;color:#26302a;margin:8px 0 6px;">${esc(r.name)}</div>
+      <div style="font-size:12.5px;color:#9a9488;line-height:1.5;flex:1;">${esc(r.desc)}</div>
+      <button style="margin-top:14px;padding:8px 14px;border:1px solid #ddd7cb;background:#f7f5f0;border-radius:9px;font:600 12.5px 'Instrument Sans',sans-serif;color:#3f5340;cursor:pointer;align-self:flex-start;">Generate</button>
+    </div>`).join('');
+  return `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">${cards}</div>`;
+}
+
+/* -- Gym -- */
+function viewGym(){
+  const kpis = GYM_KPIS.map(k => `
+    <div style="${CARD}padding:18px;">
+      <div style="font-size:12px;color:#9a9488;text-transform:uppercase;letter-spacing:.8px;">${esc(k.label)}</div>
+      <div class="serif" style="font-weight:600;font-size:30px;color:#26302a;margin-top:6px;">${esc(k.value)}</div>
+    </div>`).join('');
+  const classes = GYM_CLASSES.map(c => `
+    <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid #f0ede6;">
+      <div style="font-size:13px;font-weight:600;color:#3f5340;width:64px;">${esc(c.time)}</div>
+      <div style="flex:1;"><div style="font-size:13.5px;color:#2a2824;">${esc(c.name)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(c.trainer)}</div></div>
+      <div style="font-size:12px;color:#9a9488;">${esc(c.day)}</div>
+    </div>`).join('');
+  const rates = GYM_RATES.map(r => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f0ede6;">
+      <span style="font-size:13px;color:#2a2824;">${esc(r.plan)}</span><span style="font-size:13px;color:#3f5340;font-weight:600;">${esc(r.price)}</span>
+    </div>`).join('');
+  return `
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">${kpis}</div>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;align-items:start;">
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:14px;">Classes Timetable</div>${classes}</div>
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:14px;">Rate Card &amp; Day Pass</div>${rates}</div>
+      </div>
+    </div>`;
+}
+
+function moduleBody(){
+  switch (S.activeModule){
+    case 'dashboard': return viewDashboard();
+    case 'appointments': return viewAppointments();
+    case 'clients': return viewClients();
+    case 'billing': return viewBilling();
+    case 'inventory': return viewInventory();
+    case 'staff': return viewStaff();
+    case 'marketing': return viewMarketing();
+    case 'analytics': return viewAnalytics();
+    case 'reports': return viewReports();
+    case 'gym': return viewGym();
+    default: return viewDashboard();
+  }
+}
+
+function desktop(){
+  return `
+    <div style="width:100%;flex:1;display:flex;background:#f4f1ea;">
+      ${sidebar()}
+      <div style="flex:1;min-width:0;padding:26px 32px 60px;overflow:auto;">
+        ${moduleHeader()}
+        ${moduleBody()}
+      </div>
+    </div>`;
+}
+
+/* --------------------------- BOOKING MODAL --------------------------- */
+function bookingStepper(){
+  return BK_STEP_LABELS.map((label, i) => {
+    const n = i+1, on = S.bkStep===n, done = S.bkStep>n;
+    const numStyle = "width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;"
+      + (on ? "background:#3f5340;color:#fff;" : done ? "background:#c9b491;color:#4a3f2a;" : "background:#eae6dd;color:#9a9488;");
+    const labelStyle = "font-size:12.5px;font-weight:" + (on?'600':'500') + ";color:" + (on?'#26302a':'#9a9488') + ";";
+    const conn = i < BK_STEP_LABELS.length-1 ? '<div style="flex:1;height:1px;background:#e2ddd3;min-width:14px;"></div>' : '';
+    return `<div style="display:flex;align-items:center;gap:8px;"><div style="${numStyle}">${done?'✓':n}</div><div style="${labelStyle}">${esc(label)}</div></div>${conn}`;
+  }).join('');
+}
+
+function bookingStepBody(){
+  if (S.bkStep === 1){
+    const opts = MENU.map((mi, i) => `
+      <button onclick="App.pickService(${i})" style="${optStyle(S.bkService===i)}">
+        <span>${esc(mi.name)}</span><span style="color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(mi.price)}</span>
+      </button>`).join('');
+    return `<div style="display:flex;flex-direction:column;gap:9px;">${opts}</div>`;
+  }
+  if (S.bkStep === 2){
+    const days = BK_DAYS.map((d, i) => `<button onclick="App.pickDay(${i})" style="${chipStyle(S.bkDay===i)}">${esc(d)}</button>`).join('');
+    const times = BK_TIMES.map(tt => {
+      const taken = tt==='11:30' || tt==='16:00';
+      const st = taken ? "padding:9px 15px;border-radius:10px;border:1px dashed #e2ddd3;background:#f4f1ea;color:#c2bcaf;font:500 13px 'Instrument Sans',sans-serif;cursor:not-allowed;white-space:nowrap;" : chipStyle(S.bkTime===tt);
+      return `<button ${taken?'disabled':''} onclick="${taken?'':`App.pickTime('${tt}')`}" style="${st}">${taken?tt+' · full':tt}</button>`;
+    }).join('');
+    return `
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin-bottom:9px;">Choose a day</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;">${days}</div>
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin-bottom:9px;">Available times</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">${times}</div>`;
+  }
+  if (S.bkStep === 3){
+    const th = BK_THERAPISTS.map(n => `
+      <button onclick="App.pickTherapist('${esc(n)}')" style="${optStyle(S.bkTherapist===n)}">
+        <span style="display:flex;align-items:center;gap:10px;"><span style="width:28px;height:28px;border-radius:50%;background:#eae4d7;color:#7a6f57;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;">${esc(initials(n))}</span>${esc(n)}</span>
+      </button>`).join('');
+    const rooms = BK_ROOMS.map(r => `<button onclick="App.pickRoom('${esc(r)}')" style="${chipStyle(S.bkRoom===r)}">${esc(r)}</button>`).join('');
+    return `
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin-bottom:9px;">Assign therapist</div>
+      <div style="display:flex;flex-direction:column;gap:9px;margin-bottom:20px;">${th}</div>
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin-bottom:9px;">Assign room</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">${rooms}</div>`;
+  }
+  if (S.bkStep === 4){
+    const inp = "width:100%;padding:12px 14px;border:1px solid #e2ddd3;border-radius:11px;font:400 14px 'Instrument Sans',sans-serif;color:#2a2824;background:#fff;outline:none;";
+    return `
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div>
+          <label style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;display:block;margin-bottom:7px;">Client name</label>
+          <input id="bkClient" value="${esc(S.bkClient)}" oninput="App.setField('bkClient', this.value, 'bkClient')" placeholder="e.g. Aisha Kembabazi" style="${inp}">
+        </div>
+        <div>
+          <label style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;display:block;margin-bottom:7px;">Phone number</label>
+          <input id="bkPhone" value="${esc(S.bkPhone)}" oninput="App.setField('bkPhone', this.value, 'bkPhone')" placeholder="+256 7xx xxx xxx" style="${inp}">
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#f7f5f0;border:1px solid #eae4d7;border-radius:12px;padding:14px 16px;">
+          <div><div style="font-size:13.5px;color:#26302a;font-weight:500;">Send SMS reminder</div><div style="font-size:12px;color:#9a9488;">24 hours before the appointment</div></div>
+          <div onclick="App.toggleReminder()" style="width:44px;height:24px;border-radius:14px;padding:2px;cursor:pointer;display:flex;${S.bkReminder?'background:#3f5340;justify-content:flex-end;':'background:#d8d3c8;justify-content:flex-start;'}">
+            <div style="width:20px;height:20px;border-radius:50%;background:#fff;"></div>
+          </div>
+        </div>
+      </div>`;
+  }
+  // step 5 — confirm
+  const service = S.bkService!==null ? MENU[S.bkService].name : '—';
+  const price = S.bkService!==null ? MENU[S.bkService].price : '—';
+  const row = (l, v) => `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f0ede6;font-size:13.5px;"><span style="color:#9a9488;">${l}</span><span style="color:#26302a;font-weight:500;text-align:right;">${esc(v)}</span></div>`;
+  if (S.bkDone){
+    return `
+      <div style="text-align:center;padding:24px 10px;">
+        <div style="width:64px;height:64px;border-radius:50%;background:#eef2ec;color:#3f5340;display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 16px;">✓</div>
+        <div class="serif" style="font-size:24px;color:#26302a;">Booking Confirmed</div>
+        <div style="font-size:13.5px;color:#8f897e;margin-top:8px;line-height:1.5;">${esc(service)} for ${esc(S.bkClient||'the client')}<br>${esc(BK_DAYS[S.bkDay||0])} March 2026 · ${esc(S.bkTime||'—')} · ${esc(S.bkRoom||'—')}</div>
+        <div style="font-size:12.5px;color:#6a8168;margin-top:10px;">${S.bkReminder?'An SMS reminder will be sent 24h before.':'No reminder scheduled.'}</div>
+      </div>`;
+  }
+  return `
+    <div style="${CARD}padding:6px 18px;">
+      ${row('Service', service)}
+      ${row('Price', price)}
+      ${row('Date', BK_DAYS[S.bkDay||0] + ' March 2026')}
+      ${row('Time', S.bkTime || '—')}
+      ${row('Therapist', S.bkTherapist || '—')}
+      ${row('Room', S.bkRoom || '—')}
+      ${row('Client', S.bkClient || '—')}
+      ${row('Phone', S.bkPhone || '—')}
+      ${row('Branch', 'The Calabash ' + S.branch)}
+    </div>
+    <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin:18px 0 9px;">Payment method</div>
+    <div style="display:flex;flex-direction:column;gap:9px;">
+      ${BK_PAYMENTS.map(p => `<button onclick="App.pickPayment('${esc(p)}')" style="${optStyle(S.bkPayment===p)}"><span>${esc(p)}</span></button>`).join('')}
+    </div>`;
+}
+
+function bookingModal(){
+  if (!S.bkOpen) return '';
+  const ok = App.bkCanNext();
+  const footer = S.bkDone
+    ? `<button onclick="App.closeBooking()" style="${bkNextBtnStyle(true)}">Done</button>`
+    : `
+      ${S.bkStep>1 ? `<button onclick="App.bkBack()" style="padding:11px 20px;border:1px solid #ddd7cb;background:#fff;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">Back</button>` : '<div></div>'}
+      <button id="bkNextBtn" onclick="App.bkNext()" style="${bkNextBtnStyle(ok)}">${S.bkStep===5?'Confirm Booking':'Continue'}</button>`;
+  return `
+    <div onclick="App.closeBooking()" style="position:fixed;inset:0;background:rgba(30,28,24,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;">
+      <div onclick="event.stopPropagation()" style="width:560px;max-width:100%;max-height:90vh;background:#faf8f4;border-radius:20px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 30px 70px rgba(30,28,24,.32);">
+        <div style="padding:20px 24px;border-bottom:1px solid #eae4d7;display:flex;align-items:center;justify-content:space-between;">
+          <div class="serif" style="font-size:21px;color:#26302a;">New Booking</div>
+          <button onclick="App.closeBooking()" style="width:30px;height:30px;border:none;background:#f0ede6;border-radius:8px;color:#6b665d;font-size:16px;cursor:pointer;">✕</button>
+        </div>
+        ${S.bkDone ? '' : `<div style="padding:16px 24px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid #f0ede6;">${bookingStepper()}</div>`}
+        <div style="padding:22px 24px;overflow:auto;flex:1;">${bookingStepBody()}</div>
+        <div style="padding:16px 24px;border-top:1px solid #eae4d7;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f4f1ea;">${footer}</div>
+      </div>
+    </div>`;
+}
+
+/* ----------------------------- MOBILE -------------------------------- */
+function mobileHome(){
+  const appts = TODAY.slice(0,4).map(a => `
+    <div style="${CARD}padding:12px 14px;margin-bottom:9px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="font-size:13px;font-weight:600;color:#3f5340;">${esc(a.time)}</div>
+        <div style="width:7px;height:7px;border-radius:50%;background:${a.dot};"></div>
+        <div style="flex:1;"><div style="font-size:13px;color:#2a2824;font-weight:500;">${esc(a.guest)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(a.treatment)}</div></div>
+      </div>
+    </div>`).join('');
+  return `
+    <div class="serif" style="font-size:26px;color:#26302a;margin:6px 0 2px;">Good morning, Lucy</div>
+    <div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">Friday, 21 March · Morning shift</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+      <div style="background:#26302a;color:#fff;border-radius:16px;padding:16px;"><div style="font-size:11px;color:#9fb09b;text-transform:uppercase;letter-spacing:.5px;">Revenue</div><div class="serif" style="font-size:26px;margin-top:4px;">4.24M</div></div>
+      <div style="${CARD}padding:16px;"><div style="font-size:11px;color:#9a9488;text-transform:uppercase;letter-spacing:.5px;">Bookings</div><div class="serif" style="font-size:26px;color:#26302a;margin-top:4px;">38</div></div>
+    </div>
+    <div style="font-size:13px;font-weight:600;color:#26302a;margin-bottom:8px;">Next appointments</div>${appts}`;
+}
+function mobileBook(){
+  const svcs = MENU.slice(0,6).map(m => `
+    <button onclick="App.openBooking()" style="width:100%;text-align:left;${CARD}padding:14px;margin-bottom:9px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+      <span style="font-size:13.5px;color:#2a2824;">${esc(m.name)}</span><span style="font-size:12.5px;color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(m.price)}</span>
+    </button>`).join('');
+  return `
+    <div class="serif" style="font-size:24px;color:#26302a;margin:6px 0 4px;">Book a Service</div>
+    <div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">Tap a service to start a booking</div>
+    <button onclick="App.openBooking()" style="width:100%;padding:13px;border:none;background:#3f5340;color:#fff;border-radius:13px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;margin-bottom:16px;">+ New Booking</button>
+    ${svcs}`;
+}
+function mobileStaff(){
+  const shift = ON_SHIFT.map(s => `
+    <div style="${CARD}padding:12px 14px;margin-bottom:9px;display:flex;align-items:center;gap:10px;">
+      <div style="width:32px;height:32px;border-radius:50%;background:#eae4d7;color:#7a6f57;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">${esc(s.initials)}</div>
+      <div style="flex:1;"><div style="font-size:13px;color:#2a2824;">${esc(s.name)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(s.role)}</div></div>
+      <div style="font-size:11.5px;color:#6a8168;">${esc(s.shift)}</div>
+    </div>`).join('');
+  return `
+    <div class="serif" style="font-size:24px;color:#26302a;margin:6px 0 4px;">On Shift Now</div>
+    <div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">${RAW_STAFF.length} team members · Wampewo</div>${shift}`;
+}
+function mobile(){
+  const screen = S.mScreen==='home' ? mobileHome() : S.mScreen==='book' ? mobileBook() : mobileStaff();
+  const tab = (scr, label, icon) => `<button onclick="App.goM('${scr}')" style="${mTabStyle(S.mScreen===scr)}"><div style="font-size:16px;line-height:1;">${icon}</div><div style="margin-top:3px;">${label}</div></button>`;
+  return `
+    <div style="width:100%;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:34px 0 60px;background:#e7e3da;">
+      <div style="width:390px;max-width:100%;height:800px;background:#20261f;border-radius:44px;padding:12px;box-shadow:0 30px 70px rgba(30,28,24,.28);">
+        <div style="width:100%;height:100%;background:#f4f1ea;border-radius:33px;overflow:hidden;position:relative;display:flex;flex-direction:column;">
+          <div style="height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font-size:12.5px;font-weight:600;color:#26302a;flex-shrink:0;">
+            <span>9:41</span><span>Wampewo Spa</span><span>100%</span>
+          </div>
+          <div style="flex:1;overflow:auto;padding:6px 18px 20px;">${screen}</div>
+          <div style="flex-shrink:0;background:#fbfaf7;border-top:1px solid #eae4d7;padding:8px 14px 14px;display:flex;gap:6px;">
+            ${tab('home','Home','⌂')}${tab('book','Book','＋')}${tab('staff','Staff','☰')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------ RENDER ------------------------------- */
+function render(){
+  const body = S.device==='desktop' ? desktop() : mobile();
+  document.getElementById('root').innerHTML = `
+    <div style="width:100%;min-height:100vh;background:#e7e3da;display:flex;flex-direction:column;align-items:center;padding:0;">
+      ${topBar()}
+      ${body}
+    </div>
+    ${bookingModal()}`;
+  // restore focus for booking text inputs after re-render
+  if (S._focus){
+    const el = document.getElementById(S._focus);
+    if (el){ el.focus(); const v = el.value; el.value = ''; el.value = v; }
+  }
+}
+
+render();
+</script>
+</body>
+</html>
