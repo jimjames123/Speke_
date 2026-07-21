@@ -14,12 +14,15 @@
   a { color: #6a8168; text-decoration: none; }
   a:hover { color: #4f6350; }
   button { font-family: 'Instrument Sans', sans-serif; }
-  input { font-family: 'Instrument Sans', sans-serif; }
+  input, select, textarea { font-family: 'Instrument Sans', sans-serif; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: #cfc9bd; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
   ::-webkit-scrollbar-track { background: transparent; }
   tr.client-row:hover { background: #f7f5f0; }
   .serif { font-family: 'Cormorant Garamond', serif; }
+  .fld { width:100%;padding:11px 13px;border:1px solid #e2ddd3;border-radius:11px;font:400 14px 'Instrument Sans',sans-serif;color:#2a2824;background:#fff;outline:none; }
+  .fld:focus { border-color:#3f5340; }
+  .lbl { font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;display:block;margin-bottom:7px; }
 </style>
 </head>
 <body>
@@ -29,16 +32,44 @@
 "use strict";
 /* =====================================================================
    The Calabash — Spa & Salon Management Suite
-   Rebuilt from the Calabash Spa Management design as a standalone SPA.
-   Single-file, no build step, no runtime dependencies.
+   Single-file SPA · demo auth · localStorage persistence.
    ===================================================================== */
+
+/* ------------------------- persistence helpers ----------------------- */
+const LS = {
+  get(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e){ return d; } },
+  set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} },
+  del(k){ try { localStorage.removeItem(k); } catch(e){} },
+};
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const DB_KEY = 'calabash_db_v1';
+const SESSION_KEY = 'calabash_session_v1';
+
+/* ------------------------------ auth --------------------------------- */
+// Demo accounts — client-side only, NOT real security.
+const USERS = [
+  { user: 'lucy',     pass: 'spa123', name: 'Lucy Mitambo',  role: 'manager',      title: 'Health Club Manager', initials: 'LM' },
+  { user: 'beatrice', pass: 'spa123', name: 'Beatrice N.',   role: 'receptionist', title: 'Receptionist',        initials: 'BE' },
+];
+const ALL_MODULES = ['dashboard','appointments','clients','billing','inventory','reports','marketing','analytics','staff','gym'];
+const ROLE_MODULES = {
+  manager: ALL_MODULES,
+  // Receptionists don't see Finance (billing, reports) or Growth (marketing, analytics).
+  receptionist: ['dashboard','appointments','clients','inventory','staff','gym'],
+};
+const allowed = (m) => S.session && ROLE_MODULES[S.session.role].includes(m);
 
 /* ---------------------------- STATE ---------------------------------- */
 const S = {
+  session: LS.get(SESSION_KEY, null),
+  loginError: '',
   device: 'desktop',
   activeModule: 'dashboard',
   branch: 'Wampewo',
   clientView: null,
+  clientSearch: '',
+  clientForm: null,       // null | { editIndex: number|null }
+  formError: '',
   mScreen: 'home',
   // booking wizard
   bkOpen: false, bkStep: 1, bkDone: false,
@@ -48,20 +79,19 @@ const S = {
 };
 
 const CUR = 'Ugx';
-const fmt = (n) => CUR + ' ' + n.toLocaleString('en-US');
-const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const initials = (name) => { const p = name.trim().split(/\s+/); return ((p[0]||'')[0]||'') + ((p[1]||'')[0]||''); };
+const fmt = (n) => CUR + ' ' + Number(n).toLocaleString('en-US');
+const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const initials = (name) => { const p = String(name).trim().split(/\s+/); return ((p[0]||'')[0]||'') + ((p[1]||'')[0]||''); };
+const priceNum = (s) => Number(String(s).replace(/[^0-9]/g,'')) || 0;
 
 /* --------------------------- STATIC DATA ----------------------------- */
 const BRANCHES = ['Wampewo','Munyonyo','Bukoto'];
-
 const NAV = {
   Operations: [['dashboard','Dashboard'],['appointments','Appointments'],['clients','Clients']],
   Finance:    [['billing','Billing & Payments'],['inventory','Inventory'],['reports','Reports & Ledgers']],
   Growth:     [['marketing','Marketing'],['analytics','Analytics']],
   Facilities: [['staff','Staff Management'],['gym','Gym & Health Club']],
 };
-
 const TITLES = {
   dashboard: ['Dashboard', 'Today at a glance', 'New Booking'],
   appointments: ['Appointments', 'Room schedule & service booking', 'New Booking'],
@@ -74,7 +104,6 @@ const TITLES = {
   reports: ['Reports & Ledgers', 'Customised spa & gym reports', 'Build Report'],
   gym: ['Gym & Health Club', 'Memberships, classes & day passes', 'New Member'],
 };
-
 const MENU = [
   { name: 'Swedish Massage · 60min', price: CUR + ' 180,000' },
   { name: 'Deep Tissue · 60min', price: CUR + ' 200,000' },
@@ -87,7 +116,6 @@ const MENU = [
   { name: 'Full Head Colour', price: CUR + ' 100,000' },
   { name: 'Keratin 72 · Medium', price: CUR + ' 250,000' },
 ];
-
 const RAW_STAFF = [
   ['Justin','Supervisor'],['Sharon','Supervisor'],['Beatrice','Receptionist'],['Anita','Receptionist'],
   ['Olivia','Reception trainee'],['Muhunza Nana','Therapist'],['Nanono Desire','Therapist'],['Nassuna Phiona','Therapist'],
@@ -101,10 +129,8 @@ const RAW_STAFF = [
   ['Katwala Farouk','Hair dresser'],['Musinguzi Richard','Hair dresser'],['Faheem','Hair dresser'],
   ['Kamulegeya Daniel','Nail technician'],['Winnie','Nail technician'],
 ];
-
 const ROOMS1 = ['Lily','Orchid','Rose','Lavender','Lotus*','Bamboo','Jasmine','Hammam'];
 const ROOMS2 = ['Cinnamon*','Sandalwood','Gardenia','Magnolia*','Eucalyptus*','Peppermint','Hibiscus'];
-
 const SCHED = [
   { room: 'Lily',     cells: ['','book','book','','hold',''] },
   { room: 'Orchid',   cells: ['book','book','','book','',''] },
@@ -115,7 +141,8 @@ const SCHED = [
 ];
 const CELL_LABELS = { book:'Booked', couple:'Couple', hold:'Hold', '':'' };
 
-const CLIENTS = [
+// Seed clients (spend stored numeric)
+const CLIENTS_SEED = [
   { name: 'Aisha Kembabazi', phone: '+256 772 xxx 118', email: 'aisha.k@gmail.com', tier: 'Gold', visits: 24, last: '12 Mar', spend: 3120000, joined: 'Jan 2024', fav: 'Nanono Desire',
     prefs: ['Medium pressure','Lavender oil','Quiet room','Afternoon slots'], allergies: 'Sensitive to citrus oils', points: 480,
     notes: 'Prefers Nanono. Celebrates birthday 14 Aug — offer spa day.',
@@ -153,12 +180,6 @@ const CLIENTS = [
     upcoming: [['Wed 26 Mar · 14:45','Full Head Colour','Orchid']] },
 ];
 
-const KPIS = [
-  { label: 'Revenue Today', value: '4.24M', delta: '▲ 12% vs yesterday', deltaColor: '#5a7a52' },
-  { label: 'Appointments', value: '38', delta: '6 walk-ins · 4 no-shows', deltaColor: '#9a9488' },
-  { label: 'Room Occupancy', value: '74%', delta: '15 rooms · 2 floors', deltaColor: '#9a9488' },
-  { label: 'New Clients', value: '6', delta: '▲ this week', deltaColor: '#5a7a52' },
-];
 const TODAY = [
   { time: '09:00', guest: 'Aisha Kembabazi', treatment: 'Swedish Massage 60min', room: 'Lavender', therapist: 'Nanono Desire', dot: '#6a8168' },
   { time: '10:15', guest: 'David & Ruth O.', treatment: 'Couples Aroma Ritual', room: 'Lotus', therapist: 'Kirabo Sophie', dot: '#c9a2a8' },
@@ -173,11 +194,7 @@ const ON_SHIFT = [
   { name: 'Winnie', role: 'Nail technician', shift: 'Middle', initials: 'WI' },
   { name: 'Kirabo Sophie', role: 'Therapist', shift: 'Evening', initials: 'KS' },
 ];
-const LOW_STOCK = [
-  { name: 'Massage Oil (Lavender)', left: 4 },
-  { name: 'Shellac Top Coat', left: 2 },
-  { name: 'Bath Towels (L)', left: 9 },
-];
+const LOW_STOCK = [ { name: 'Massage Oil (Lavender)', left: 4 }, { name: 'Shellac Top Coat', left: 2 }, { name: 'Bath Towels (L)', left: 9 } ];
 const SALES_COLS = ['Guest','Treatment','Amount','Receipt','Room','Time in','Time out','Therapist'];
 const SALES = [
   { guest: 'Aisha K.', treatment: 'Swedish Massage 60min', amount: CUR+' 180,000', receipt: 'RC-4821', room: 'Lavender', tin: '09:00', tout: '10:05', therapist: 'Nanono D.' },
@@ -187,10 +204,7 @@ const SALES = [
   { guest: 'Patricia A.', treatment: 'Egyptian Hammam', amount: CUR+' 250,000', receipt: 'RC-4825', room: 'Hammam', tin: '14:45', tout: '16:00', therapist: 'Bukirwa R.' },
   { guest: 'Diana K.', treatment: 'Keratin 72 · Medium', amount: CUR+' 250,000', receipt: 'RC-4826', room: 'Orchid', tin: '15:10', tout: '16:40', therapist: 'Karungi H.' },
 ];
-const PAYMENTS = [
-  { name: 'Mobile Money', pct: 46 }, { name: 'Credit / Debit Card', pct: 24 },
-  { name: 'Pesapal', pct: 18 }, { name: 'Digital Wallet', pct: 12 },
-];
+const PAYMENTS = [ { name: 'Mobile Money', pct: 46 }, { name: 'Credit / Debit Card', pct: 24 }, { name: 'Pesapal', pct: 18 }, { name: 'Digital Wallet', pct: 12 } ];
 const PRODUCTS = [
   { name: 'Massage Oil · Lavender', cat: 'Consumable', stock: '4 btl', status: 'Reorder' },
   { name: 'Shellac Top Coat', cat: 'Nail bar', stock: '2 btl', status: 'Reorder' },
@@ -201,12 +215,9 @@ const PRODUCTS = [
   { name: 'Cotton Rounds', cat: 'Consumable', stock: '40 pk', status: 'OK' },
 ];
 const EQUIPMENT = [
-  { name: 'Massage Beds', count: 15, cond: 'Good', color: '#5a7a52' },
-  { name: 'Hammam Table', count: 1, cond: 'Good', color: '#5a7a52' },
-  { name: 'Steam Cabin', count: 2, cond: 'Service due', color: '#b06a2a' },
-  { name: 'Bath Towels (L)', count: 9, cond: 'Low', color: '#b06a2a' },
-  { name: 'Robes', count: 34, cond: 'Good', color: '#5a7a52' },
-  { name: 'Nail Stations', count: 4, cond: 'Good', color: '#5a7a52' },
+  { name: 'Massage Beds', count: 15, cond: 'Good', color: '#5a7a52' }, { name: 'Hammam Table', count: 1, cond: 'Good', color: '#5a7a52' },
+  { name: 'Steam Cabin', count: 2, cond: 'Service due', color: '#b06a2a' }, { name: 'Bath Towels (L)', count: 9, cond: 'Low', color: '#b06a2a' },
+  { name: 'Robes', count: 34, cond: 'Good', color: '#5a7a52' }, { name: 'Nail Stations', count: 4, cond: 'Good', color: '#5a7a52' },
 ];
 const SHIFTS = [
   { name: 'Morning Shift', time: '6:00am – 3:00pm', people: ['Nanono Desire','Beatrice (Rec.)','Muhunza Nana','Najjemba Harriet','Karungi Hellen'] },
@@ -219,16 +230,10 @@ const CAMPAIGNS = [
   { channel: 'Loyalty', status: 'Draft', name: 'Refer-a-Friend', desc: 'Both client and referral earn 15,000 credit.', stat: 'Launching April' },
 ];
 const LOYALTY = [
-  { tier: 'Silver', rule: '5+ visits', reward: '5% off' },
-  { tier: 'Gold', rule: '15+ visits', reward: '10% + free add-on' },
-  { tier: 'Platinum', rule: '30+ visits', reward: '15% + birthday spa day' },
-  { tier: 'Gift Vouchers', rule: 'Redeemable any service', reward: 'From 50,000' },
+  { tier: 'Silver', rule: '5+ visits', reward: '5% off' }, { tier: 'Gold', rule: '15+ visits', reward: '10% + free add-on' },
+  { tier: 'Platinum', rule: '30+ visits', reward: '15% + birthday spa day' }, { tier: 'Gift Vouchers', rule: 'Redeemable any service', reward: 'From 50,000' },
 ];
-const SOCIAL = [
-  { platform: 'Instagram', reach: '12.4k followers' },
-  { platform: 'Facebook', reach: '8.1k followers' },
-  { platform: 'WhatsApp Business', reach: '3.2k contacts' },
-];
+const SOCIAL = [ { platform: 'Instagram', reach: '12.4k followers' }, { platform: 'Facebook', reach: '8.1k followers' }, { platform: 'WhatsApp Business', reach: '3.2k contacts' } ];
 const REVENUE_BARS = [
   { day: 'Mon', val: 3120, h: 55 }, { day: 'Tue', val: 2980, h: 52 }, { day: 'Wed', val: 3640, h: 64 },
   { day: 'Thu', val: 4110, h: 72 }, { day: 'Fri', val: 4240, h: 76 }, { day: 'Sat', val: 5680, h: 100 }, { day: 'Sun', val: 4820, h: 85 },
@@ -249,22 +254,15 @@ const REPORTS = [
   { scope: 'CRM', name: 'Clients & Database', desc: 'Full client base with loyalty tiers and visit history.', tagColor: '#5a6b8a' },
   { scope: 'Gym & Spa', name: 'Inventory Report', desc: 'Stock levels, usage and reorder log for spa and gym.', tagColor: '#b06a2a' },
 ];
-const GYM_KPIS = [
-  { label: 'Active Members', value: '214' }, { label: 'Day Passes', value: '18' },
-  { label: 'Classes Today', value: '6' }, { label: 'Renewals Due', value: '11' },
-];
+const GYM_KPIS = [ { label: 'Active Members', value: '214' }, { label: 'Day Passes', value: '18' }, { label: 'Classes Today', value: '6' }, { label: 'Renewals Due', value: '11' } ];
 const GYM_CLASSES = [
-  { time: '06:30', name: 'Morning HIIT', trainer: 'Coach Ivan', day: 'Mon · Wed · Fri' },
-  { time: '08:00', name: 'Yoga Flow', trainer: 'Coach Ritah', day: 'Daily' },
-  { time: '12:30', name: 'Spin', trainer: 'Coach Ivan', day: 'Tue · Thu' },
-  { time: '17:30', name: 'Strength Circuit', trainer: 'Coach Musa', day: 'Mon–Fri' },
-  { time: '18:30', name: 'Pilates', trainer: 'Coach Ritah', day: 'Mon · Wed' },
-  { time: '19:30', name: 'Zumba', trainer: 'Coach Nina', day: 'Tue · Thu · Sat' },
+  { time: '06:30', name: 'Morning HIIT', trainer: 'Coach Ivan', day: 'Mon · Wed · Fri' }, { time: '08:00', name: 'Yoga Flow', trainer: 'Coach Ritah', day: 'Daily' },
+  { time: '12:30', name: 'Spin', trainer: 'Coach Ivan', day: 'Tue · Thu' }, { time: '17:30', name: 'Strength Circuit', trainer: 'Coach Musa', day: 'Mon–Fri' },
+  { time: '18:30', name: 'Pilates', trainer: 'Coach Ritah', day: 'Mon · Wed' }, { time: '19:30', name: 'Zumba', trainer: 'Coach Nina', day: 'Tue · Thu · Sat' },
 ];
 const GYM_RATES = [
-  { plan: 'Monthly Membership', price: CUR+' 200,000' }, { plan: 'Quarterly', price: CUR+' 500,000' },
-  { plan: 'Annual', price: CUR+' 1,600,000' }, { plan: 'Day Pass', price: CUR+' 30,000' },
-  { plan: 'Couples Monthly', price: CUR+' 350,000' },
+  { plan: 'Monthly Membership', price: CUR+' 200,000' }, { plan: 'Quarterly', price: CUR+' 500,000' }, { plan: 'Annual', price: CUR+' 1,600,000' },
+  { plan: 'Day Pass', price: CUR+' 30,000' }, { plan: 'Couples Monthly', price: CUR+' 350,000' },
 ];
 const HOURS = ['09:00','11:00','13:00','15:00','17:00','19:00'];
 const BK_DAYS = ['Fri 21','Sat 22','Sun 23','Mon 24','Tue 25','Wed 26'];
@@ -273,6 +271,27 @@ const BK_THERAPISTS = ['Nanono Desire','Grace Akiteng','Bukirwa Rose','Kirabo So
 const BK_ROOMS = ['Lily','Orchid','Rose','Lavender','Lotus (couple)','Bamboo','Jasmine','Hammam'];
 const BK_PAYMENTS = ['Mobile Money','Credit / Debit Card','Pesapal','Digital Wallet','Pay at desk'];
 const BK_STEP_LABELS = ['Service','Date & Time','Therapist & Room','Client','Confirm'];
+const TIERS = ['New','Silver','Gold','Platinum'];
+
+/* ------------------------------ THE DB ------------------------------- */
+// Mutable, persisted store. Seeded on first run.
+let DB = LS.get(DB_KEY, null);
+if (!DB || !Array.isArray(DB.clients)) DB = seedDB();
+function seedDB(){ const db = { clients: clone(CLIENTS_SEED), newBookings: [] }; LS.set(DB_KEY, db); return db; }
+function saveDB(){ LS.set(DB_KEY, DB); }
+function resetDB(){ DB = seedDB(); }
+
+// ---- derived (live) values ----
+const addedClients = () => DB.clients.length - CLIENTS_SEED.length;
+const revenueTotal = () => 4240000 + DB.newBookings.reduce((s,b)=>s+b.amt,0);
+const apptCount = () => 38 + DB.newBookings.length;
+const receiptsCount = () => 42 + DB.newBookings.length;
+function scheduleLive(){
+  return DB.newBookings.map(b => ({ time:b.time, guest:b.guest, treatment:b.treatment, room:b.room, therapist:b.therapist, dot:'#6a8168' })).concat(TODAY);
+}
+function salesLive(){
+  return DB.newBookings.map(b => ({ guest:b.guest, treatment:b.treatment, amount:b.amount, receipt:b.receipt, room:b.room, tin:b.tin, tout:b.tout, therapist:b.therapist })).concat(SALES);
+}
 
 /* ---------------------------- STYLE HELPERS -------------------------- */
 function tierBadge(t) {
@@ -289,12 +308,8 @@ function campBadge(s) {
 }
 function cellStyle(kind) {
   const base = "border-radius:7px;padding:6px 4px;font-size:10.5px;font-weight:600;display:flex;align-items:center;justify-content:center;min-height:34px;text-align:center;line-height:1.15;";
-  const map = {
-    '': "background:#f6f4ee;color:transparent;",
-    book: "background:#e7efe4;color:#4a6248;border:1px solid #d3e2ce;",
-    couple: "background:#f6e9ec;color:#9a5d68;border:1px solid #ecd6db;",
-    hold: "background:#f4efe2;color:#8a7742;border:1px solid #e8dcc0;",
-  };
+  const map = { '': "background:#f6f4ee;color:transparent;", book: "background:#e7efe4;color:#4a6248;border:1px solid #d3e2ce;",
+    couple: "background:#f6e9ec;color:#9a5d68;border:1px solid #ecd6db;", hold: "background:#f4efe2;color:#8a7742;border:1px solid #e8dcc0;" };
   return base + (map[kind] || map['']);
 }
 function roomChip(label) {
@@ -326,29 +341,89 @@ function chipStyle(on) {
 function mTabStyle(on) {
   return "flex:1;padding:8px;border:none;background:transparent;cursor:pointer;font:600 12px 'Instrument Sans',sans-serif;border-radius:10px;" + (on ? "color:#3f5340;background:#eef1ea;" : "color:#a8a396;");
 }
-
-/* card wrapper */
 const CARD = 'background:#fff;border:1px solid #e7e3da;border-radius:16px;';
 
 /* ---------------------------- HANDLERS (App) ------------------------- */
 const App = {
+  /* auth */
+  login(e){
+    e.preventDefault();
+    const u = (document.getElementById('loginUser').value || '').trim().toLowerCase();
+    const p = document.getElementById('loginPass').value || '';
+    const found = USERS.find(x => x.user === u && x.pass === p);
+    if (!found){ S.loginError = 'Incorrect username or password.'; render(); return false; }
+    S.session = { user: found.user, name: found.name, role: found.role, title: found.title, initials: found.initials };
+    LS.set(SESSION_KEY, S.session);
+    S.loginError = ''; S.activeModule = 'dashboard'; S.clientView = null; S.mScreen = 'home';
+    render(); return false;
+  },
+  logout(){ S.session = null; LS.del(SESSION_KEY); render(); },
+  fillDemo(u){ document.getElementById('loginUser').value = u; document.getElementById('loginPass').value = 'spa123'; document.getElementById('loginUser').focus(); },
+
+  /* navigation */
   setDevice(d){ S.device = d; render(); },
   setBranch(b){ S.branch = b; render(); },
-  setModule(m){ S.activeModule = m; S.clientView = null; render(); },
+  setModule(m){ if (!allowed(m)) return; S.activeModule = m; S.clientView = null; S.clientForm = null; render(); },
+  moduleAction(){
+    const m = S.activeModule;
+    if (m==='dashboard' || m==='appointments') App.openBooking();
+    else if (m==='clients') App.openAddClient();
+  },
+
+  /* clients */
   openClient(i){ S.clientView = i; render(); },
   closeClient(){ S.clientView = null; render(); },
-  moduleAction(){ if (S.activeModule==='dashboard' || S.activeModule==='appointments') App.openBooking(); },
-  // mobile
+  setSearch(v){ S.clientSearch = v; S._focus = 'clientSearch'; render(); },
+  openAddClient(){ S.clientForm = { editIndex: null }; S.formError=''; render(); },
+  openEditClient(i){ S.clientForm = { editIndex: i }; S.formError=''; render(); },
+  closeClientForm(){ S.clientForm = null; S.formError=''; render(); },
+  saveClient(e){
+    e.preventDefault();
+    const g = (id) => (document.getElementById(id).value || '').trim();
+    const name = g('cfName'), phone = g('cfPhone');
+    if (!name || !phone){ S.formError = 'Name and phone are required.'; render(); return false; }
+    const prefs = g('cfPrefs').split(',').map(s=>s.trim()).filter(Boolean);
+    const fields = { name, phone, email: g('cfEmail'), tier: document.getElementById('cfTier').value,
+      fav: g('cfFav') || '—', prefs, allergies: g('cfAllergies') || 'None on file', notes: g('cfNotes') || '—' };
+    const idx = S.clientForm.editIndex;
+    if (idx === null){
+      DB.clients.push(Object.assign({ visits:0, last:'—', spend:0, joined:'Mar 2026', points:0, history:[], upcoming:[] }, fields));
+      S.clientView = null;
+    } else {
+      Object.assign(DB.clients[idx], fields);
+      S.clientView = idx;
+    }
+    saveDB(); S.clientForm = null; S.formError = ''; render(); return false;
+  },
+
+  /* mobile */
   goM(scr){ S.mScreen = scr; render(); },
-  // booking
-  openBooking(){ Object.assign(S, { bkOpen:true, bkStep:1, bkDone:false, bkService:null, bkDay:0, bkTime:null, bkTherapist:null, bkRoom:null, bkClient:'', bkPhone:'', bkPayment:null, bkReminder:true, _focus:null }); render(); },
+
+  /* booking */
+  openBooking(prefillIdx){
+    Object.assign(S, { bkOpen:true, bkStep:1, bkDone:false, bkService:null, bkDay:0, bkTime:null, bkTherapist:null, bkRoom:null,
+      bkClient:'', bkPhone:'', bkPayment:null, bkReminder:true, _focus:null });
+    if (typeof prefillIdx === 'number' && DB.clients[prefillIdx]){ S.bkClient = DB.clients[prefillIdx].name; S.bkPhone = DB.clients[prefillIdx].phone; }
+    render();
+  },
   closeBooking(){ S.bkOpen = false; S._focus = null; render(); },
   bkCanNext(){
     return [null, S.bkService!==null, S.bkTime!==null, (S.bkTherapist!==null && S.bkRoom!==null),
       (S.bkClient.trim()!=='' && S.bkPhone.trim()!==''), S.bkPayment!==null][S.bkStep];
   },
-  bkNext(){ if (S.bkStep===5){ if (App.bkCanNext()) { S.bkDone=true; render(); } return; } if (App.bkCanNext()){ S.bkStep=Math.min(5,S.bkStep+1); S._focus=null; render(); } },
+  bkNext(){
+    if (S.bkStep===5){ if (App.bkCanNext()){ App.commitBooking(); S.bkDone=true; render(); } return; }
+    if (App.bkCanNext()){ S.bkStep=Math.min(5,S.bkStep+1); S._focus=null; render(); }
+  },
   bkBack(){ S.bkStep=Math.max(1,S.bkStep-1); S._focus=null; render(); },
+  commitBooking(){
+    const svc = MENU[S.bkService];
+    const amt = priceNum(svc.price);
+    const n = DB.newBookings.length;
+    DB.newBookings.unshift({ time:S.bkTime, guest:S.bkClient, treatment:svc.name, room:S.bkRoom, therapist:S.bkTherapist,
+      amt, amount:svc.price, receipt:'RC-'+(4827+n), tin:S.bkTime, tout:'—', payment:S.bkPayment, reminder:S.bkReminder });
+    saveDB();
+  },
   pickService(i){ S.bkService=i; render(); },
   pickDay(i){ S.bkDay=i; render(); },
   pickTime(t){ S.bkTime=t; render(); },
@@ -357,23 +432,55 @@ const App = {
   pickPayment(p){ S.bkPayment=p; render(); },
   setField(f, v, id){ S[f]=v; S._focus=id; App.refreshNextBtn(); },
   toggleReminder(){ S.bkReminder=!S.bkReminder; render(); },
-  refreshNextBtn(){
-    const btn = document.getElementById('bkNextBtn');
-    if (btn){ const ok = App.bkCanNext(); btn.setAttribute('style', bkNextBtnStyle(ok)); }
-  },
+  refreshNextBtn(){ const b = document.getElementById('bkNextBtn'); if (b){ b.setAttribute('style', bkNextBtnStyle(App.bkCanNext())); } },
 };
-
 function bkNextBtnStyle(ok){
   return "padding:11px 22px;border:none;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;"
     + (ok ? "background:#3f5340;color:#fff;" : "background:#d8d3c8;color:#a8a396;cursor:not-allowed;");
 }
 
-/* ============================ VIEWS ================================== */
+/* ============================ LOGIN VIEW ============================= */
+function loginView(){
+  const demo = USERS.map(u => `
+    <button type="button" onclick="App.fillDemo('${u.user}')" style="flex:1;text-align:left;border:1px solid #e2ddd3;background:#fff;border-radius:12px;padding:11px 13px;cursor:pointer;">
+      <div style="font-size:13px;font-weight:600;color:#26302a;">${esc(u.name)}</div>
+      <div style="font-size:11.5px;color:#9a9488;margin-top:2px;text-transform:capitalize;">${esc(u.role)} · ${esc(u.user)}</div>
+    </button>`).join('');
+  return `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(1200px 600px at 50% -10%, #edeae1, #e7e3da);">
+      <div style="width:400px;max-width:100%;">
+        <div style="text-align:center;margin-bottom:22px;">
+          <div style="width:56px;height:56px;border-radius:50%;background:#20261f;display:flex;align-items:center;justify-content:center;color:#c9b491;font-family:'Cormorant Garamond',serif;font-weight:700;font-size:30px;margin:0 auto 14px;">C</div>
+          <div class="serif" style="font-size:28px;color:#26302a;line-height:1.1;">The Calabash</div>
+          <div style="font-size:11px;letter-spacing:2.2px;text-transform:uppercase;color:#9a9488;margin-top:4px;">Spa &amp; Salon · Management Suite</div>
+        </div>
+        <form onsubmit="return App.login(event)" style="${CARD}padding:24px;">
+          <div style="font-weight:600;font-size:16px;color:#26302a;margin-bottom:16px;">Sign in</div>
+          <div style="margin-bottom:14px;">
+            <label class="lbl" for="loginUser">Username</label>
+            <input id="loginUser" class="fld" autocomplete="username" placeholder="lucy" value="">
+          </div>
+          <div style="margin-bottom:${S.loginError?'10':'18'}px;">
+            <label class="lbl" for="loginPass">Password</label>
+            <input id="loginPass" class="fld" type="password" autocomplete="current-password" placeholder="••••••" value="">
+          </div>
+          ${S.loginError ? `<div style="font-size:12.5px;color:#b0492a;background:#fbe7e2;border:1px solid #f0d3c8;border-radius:10px;padding:9px 12px;margin-bottom:16px;">${esc(S.loginError)}</div>` : ''}
+          <button type="submit" style="width:100%;padding:12px;border:none;background:#3f5340;color:#fff;border-radius:12px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;">Sign in</button>
+        </form>
+        <div style="margin-top:18px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:#9a9488;text-align:center;margin-bottom:10px;">Demo accounts · password <b style="color:#6b665d;">spa123</b></div>
+          <div style="display:flex;gap:10px;">${demo}</div>
+        </div>
+        <div style="text-align:center;font-size:11px;color:#a8a396;margin-top:18px;line-height:1.5;">Demo sign-in only — accounts are stored in the page, not a secure server.</div>
+      </div>
+    </div>`;
+}
 
+/* ============================ APP CHROME ============================= */
 function topBar(){
+  const u = S.session;
   const brand = 'The Calabash ' + S.branch;
-  const branches = BRANCHES.map(b =>
-    `<button onclick="App.setBranch('${b}')" style="${branchStyle(S.branch===b)}">${b}</button>`).join('');
+  const branches = BRANCHES.map(b => `<button onclick="App.setBranch('${b}')" style="${branchStyle(S.branch===b)}">${b}</button>`).join('');
   return `
   <div style="width:100%;background:#fbfaf7;border-bottom:1px solid #e2ddd3;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:20;">
     <div style="display:flex;align-items:center;gap:12px;">
@@ -391,31 +498,30 @@ function topBar(){
       <div style="display:flex;background:#f0ede6;border:1px solid #e2ddd3;border-radius:10px;padding:3px;gap:2px;">${branches}</div>
       <div style="display:flex;align-items:center;gap:10px;">
         <div style="text-align:right;line-height:1.15;">
-          <div style="font-size:13px;font-weight:600;color:#2a2824;">Lucy Mitambo</div>
-          <div style="font-size:11px;color:#9a9488;">Health Club Manager</div>
+          <div style="font-size:13px;font-weight:600;color:#2a2824;">${esc(u.name)}</div>
+          <div style="font-size:11px;color:#9a9488;">${esc(u.title)}</div>
         </div>
-        <div style="width:36px;height:36px;border-radius:50%;background:#c9b491;color:#4a3f2a;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:14px;">LM</div>
+        <div style="width:36px;height:36px;border-radius:50%;background:#c9b491;color:#4a3f2a;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:14px;">${esc(u.initials)}</div>
+        <button onclick="App.logout()" title="Sign out" style="padding:8px 12px;border:1px solid #ddd7cb;background:#fff;border-radius:9px;font:600 12.5px 'Instrument Sans',sans-serif;color:#6b665d;cursor:pointer;">Sign out</button>
       </div>
     </div>
   </div>`;
 }
-
 function sidebar(){
-  const section = (label, items) => `
-    <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#6f7a6c;padding:${label==='Operations'?'6px':'14px'} 12px 4px;">${label}</div>
-    ${items.map(([key,lbl]) => `<button onclick="App.setModule('${key}')" style="${navStyle(S.activeModule===key)}">${esc(lbl)}</button>`).join('')}`;
+  const section = (label, items) => {
+    const vis = items.filter(([k]) => allowed(k));
+    if (!vis.length) return '';
+    return `<div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#6f7a6c;padding:${label==='Operations'?'6px':'14px'} 12px 4px;">${label}</div>`
+      + vis.map(([key,lbl]) => `<button onclick="App.setModule('${key}')" style="${navStyle(S.activeModule===key)}">${esc(lbl)}</button>`).join('');
+  };
   return `
     <div style="width:236px;flex-shrink:0;background:#20261f;min-height:calc(100vh - 60px);padding:22px 14px;display:flex;flex-direction:column;gap:4px;position:sticky;top:60px;height:calc(100vh - 60px);overflow:auto;">
-      ${section('Operations', NAV.Operations)}
-      ${section('Finance', NAV.Finance)}
-      ${section('Growth', NAV.Growth)}
-      ${section('Facilities', NAV.Facilities)}
+      ${section('Operations', NAV.Operations)}${section('Finance', NAV.Finance)}${section('Growth', NAV.Growth)}${section('Facilities', NAV.Facilities)}
       <div style="margin-top:auto;padding:14px 12px 4px;border-top:1px solid rgba(255,255,255,.07);">
-        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">March 2026 · v1.0</span></div>
+        <div style="font-size:11px;color:#8b937f;line-height:1.5;">${esc(S.branch)} Branch<br><span style="color:#5f6a5c;">March 2026 · v1.1</span></div>
       </div>
     </div>`;
 }
-
 function moduleHeader(){
   const t = TITLES[S.activeModule] || TITLES.dashboard;
   const sub = S.activeModule==='dashboard' ? (t[1] + ' · ' + S.branch + ' branch') : t[1];
@@ -434,24 +540,23 @@ function moduleHeader(){
 
 /* -- Dashboard -- */
 function viewDashboard(){
-  const kpis = KPIS.map(k => `
+  const kpis = [
+    { label:'Revenue Today', value:(revenueTotal()/1e6).toFixed(2)+'M', delta:'▲ 12% vs yesterday', deltaColor:'#5a7a52' },
+    { label:'Appointments', value:String(apptCount()), delta:'6 walk-ins · 4 no-shows', deltaColor:'#9a9488' },
+    { label:'Room Occupancy', value:'74%', delta:'15 rooms · 2 floors', deltaColor:'#9a9488' },
+    { label:'New Clients', value:String(6 + addedClients()), delta:'▲ this week', deltaColor:'#5a7a52' },
+  ].map(k => `
     <div style="${CARD}padding:18px 18px 16px;">
       <div style="font-size:12px;color:#9a9488;text-transform:uppercase;letter-spacing:.8px;">${esc(k.label)}</div>
       <div class="serif" style="font-weight:600;font-size:34px;color:#26302a;line-height:1.1;margin-top:6px;">${esc(k.value)}</div>
       <div style="font-size:12px;color:${k.deltaColor};margin-top:4px;">${esc(k.delta)}</div>
     </div>`).join('');
-  const sched = TODAY.map(a => `
+  const sched = scheduleLive().map(a => `
     <div style="display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid #f0ede6;">
       <div style="font-size:13px;font-weight:600;color:#3f5340;width:52px;">${esc(a.time)}</div>
       <div style="width:8px;height:8px;border-radius:50%;background:${a.dot};flex-shrink:0;"></div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:13.5px;font-weight:500;color:#2a2824;">${esc(a.guest)}</div>
-        <div style="font-size:12px;color:#9a9488;">${esc(a.treatment)}</div>
-      </div>
-      <div style="text-align:right;">
-        <div style="font-size:12.5px;color:#4a4740;">${esc(a.room)}</div>
-        <div style="font-size:11.5px;color:#9a9488;">${esc(a.therapist)}</div>
-      </div>
+      <div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:500;color:#2a2824;">${esc(a.guest)}</div><div style="font-size:12px;color:#9a9488;">${esc(a.treatment)}</div></div>
+      <div style="text-align:right;"><div style="font-size:12.5px;color:#4a4740;">${esc(a.room)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(a.therapist)}</div></div>
     </div>`).join('');
   const shift = ON_SHIFT.map(s => `
     <div style="display:flex;align-items:center;gap:10px;padding:7px 0;">
@@ -460,22 +565,17 @@ function viewDashboard(){
       <div style="font-size:11px;color:#6a8168;">${esc(s.shift)}</div>
     </div>`).join('');
   const low = LOW_STOCK.map(p => `
-    <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px;">
-      <span style="color:#5c4a33;">${esc(p.name)}</span><span style="color:#b06a2a;font-weight:600;">${p.left} left</span>
-    </div>`).join('');
+    <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px;"><span style="color:#5c4a33;">${esc(p.name)}</span><span style="color:#b06a2a;font-weight:600;">${p.left} left</span></div>`).join('');
   return `
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:18px;">${kpis}</div>
     <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:16px;">
       <div style="${CARD}padding:20px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-          <div style="font-weight:600;font-size:15px;color:#26302a;">Today's Schedule</div>
-          <div style="font-size:12px;color:#8f897e;">Fri · 21 March 2026</div>
+          <div style="font-weight:600;font-size:15px;color:#26302a;">Today's Schedule</div><div style="font-size:12px;color:#8f897e;">Fri · 21 March 2026</div>
         </div>${sched}
       </div>
       <div style="display:flex;flex-direction:column;gap:16px;">
-        <div style="${CARD}padding:20px;">
-          <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">On Shift Now</div>${shift}
-        </div>
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">On Shift Now</div>${shift}</div>
         <div style="background:#fff5ec;border:1px solid #f0dcc4;border-radius:16px;padding:18px;">
           <div style="font-weight:600;font-size:14px;color:#8a5a24;margin-bottom:10px;">Low Stock Alerts</div>${low}
         </div>
@@ -492,16 +592,13 @@ function viewAppointments(){
   }).join('');
   const menu = MENU.map(m => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0ede6;">
-      <span style="font-size:13px;color:#2a2824;">${esc(m.name)}</span>
-      <span style="font-size:12.5px;color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(m.price)}</span>
+      <span style="font-size:13px;color:#2a2824;">${esc(m.name)}</span><span style="font-size:12.5px;color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(m.price)}</span>
     </div>`).join('');
   return `
     <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;">
       <div style="${CARD}padding:20px;overflow:auto;">
         <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:16px;">Room Schedule Board · Floor 1</div>
-        <div style="display:grid;grid-template-columns:110px repeat(6,1fr);gap:6px;min-width:640px;">
-          <div style="font-size:11px;color:#9a9488;padding:4px;">Room</div>${head}${rows}
-        </div>
+        <div style="display:grid;grid-template-columns:110px repeat(6,1fr);gap:6px;min-width:640px;"><div style="font-size:11px;color:#9a9488;padding:4px;">Room</div>${head}${rows}</div>
       </div>
       <div style="${CARD}padding:20px;">
         <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:4px;">Service Menu</div>
@@ -512,9 +609,11 @@ function viewAppointments(){
 
 /* -- Clients -- */
 function viewClients(){
-  if (S.clientView !== null) return viewClientProfile(CLIENTS[S.clientView]);
+  if (S.clientView !== null && DB.clients[S.clientView]) return viewClientProfile(DB.clients[S.clientView], S.clientView);
+  const q = S.clientSearch.trim().toLowerCase();
+  const list = DB.clients.map((c,i)=>({c,i})).filter(({c}) => !q || c.name.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q));
   const th = (t, extra='') => `<th style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;font-weight:600;padding:8px 6px;${extra}">${t}</th>`;
-  const rows = CLIENTS.map((c, i) => `
+  const rows = list.length ? list.map(({c,i}) => `
     <tr class="client-row" onclick="App.openClient(${i})" style="border-top:1px solid #f0ede6;cursor:pointer;">
       <td style="padding:12px 6px;font-size:13.5px;color:#2a2824;font-weight:500;">${esc(c.name)}</td>
       <td style="padding:12px 6px;font-size:13px;color:#6b665d;">${esc(c.phone)}</td>
@@ -522,12 +621,14 @@ function viewClients(){
       <td style="padding:12px 6px;font-size:13px;color:#6b665d;">${c.visits}</td>
       <td style="padding:12px 6px;font-size:13px;color:#6b665d;">${esc(c.last)}</td>
       <td style="padding:12px 6px;font-size:13px;color:#3f5340;font-weight:600;">${esc(fmt(c.spend))}</td>
-    </tr>`).join('');
+    </tr>`).join('')
+    : `<tr><td colspan="6" style="padding:26px 6px;text-align:center;font-size:13px;color:#9a9488;">No clients match “${esc(S.clientSearch)}”.</td></tr>`;
+  const total = 1284 + addedClients();
   return `
     <div style="${CARD}padding:8px 20px 16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;">
-        <div style="background:#f4f1ea;border:1px solid #e7e3da;border-radius:10px;padding:8px 14px;font-size:13px;color:#9a9488;width:280px;">Search clients…</div>
-        <div style="font-size:12px;color:#8f897e;">1,284 clients · 312 loyalty members</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;gap:12px;flex-wrap:wrap;">
+        <input id="clientSearch" value="${esc(S.clientSearch)}" oninput="App.setSearch(this.value)" placeholder="Search clients by name or phone…" style="background:#f4f1ea;border:1px solid #e7e3da;border-radius:10px;padding:9px 14px;font-size:13px;color:#2a2824;width:300px;max-width:100%;outline:none;">
+        <div style="font-size:12px;color:#8f897e;">${total.toLocaleString()} clients · 312 loyalty members</div>
       </div>
       <table style="width:100%;border-collapse:collapse;">
         <thead><tr style="text-align:left;">${th('Client')}${th('Phone')}${th('Loyalty')}${th('Visits')}${th('Last visit')}${th('Total spend')}</tr></thead>
@@ -535,26 +636,29 @@ function viewClients(){
       </table>
     </div>`;
 }
-
-function viewClientProfile(c){
-  const prefs = c.prefs.map(p => `<span style="font-size:12px;padding:5px 11px;border-radius:20px;background:#eef2ec;color:#3f5340;border:1px solid #dce6d8;">${esc(p)}</span>`).join('');
-  const upcoming = c.upcoming.length ? c.upcoming.map(u => `
+function viewClientProfile(c, idx){
+  const prefs = (c.prefs||[]).map(p => `<span style="font-size:12px;padding:5px 11px;border-radius:20px;background:#eef2ec;color:#3f5340;border:1px solid #dce6d8;">${esc(p)}</span>`).join('') || '<span style="font-size:12.5px;color:#9a9488;">None recorded</span>';
+  const upcoming = (c.upcoming||[]).length ? c.upcoming.map(u => `
       <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid #f0ede6;">
         <div style="width:9px;height:9px;border-radius:50%;background:#6a8168;flex-shrink:0;"></div>
         <div style="flex:1;"><div style="font-size:13.5px;color:#2a2824;font-weight:500;">${esc(u[1])}</div><div style="font-size:12px;color:#9a9488;">${esc(u[0])}</div></div>
         <div style="font-size:12.5px;color:#4a4740;">${esc(u[2])}</div>
       </div>`).join('')
-    : `<div style="font-size:13px;color:#9a9488;padding:6px 0;">No upcoming appointments. <a href="#" onclick="App.openBooking();return false;">Book one →</a></div>`;
-  const history = c.history.map(h => `
+    : `<div style="font-size:13px;color:#9a9488;padding:6px 0;">No upcoming appointments. <a href="#" onclick="App.openBooking(${idx});return false;">Book one →</a></div>`;
+  const history = (c.history||[]).length ? c.history.map(h => `
       <tr style="border-top:1px solid #f0ede6;">
         <td style="padding:10px 6px;font-size:13px;color:#6b665d;">${esc(h[0])}</td>
         <td style="padding:10px 6px;font-size:13px;color:#2a2824;">${esc(h[1])}</td>
         <td style="padding:10px 6px;font-size:13px;color:#6b665d;">${esc(h[2])}</td>
         <td style="padding:10px 6px;font-size:13px;color:#3f5340;font-weight:600;text-align:right;">${esc(fmt(h[3]))}</td>
-      </tr>`).join('');
+      </tr>`).join('')
+    : `<tr><td colspan="4" style="padding:14px 6px;font-size:13px;color:#9a9488;">No service history yet.</td></tr>`;
   const statCard = (lbl, val, sz=30) => `<div style="${CARD}padding:18px;"><div style="font-size:11px;color:#9a9488;text-transform:uppercase;letter-spacing:.7px;">${lbl}</div><div class="serif" style="font-weight:600;font-size:${sz}px;color:#26302a;margin-top:${sz===24?'6px':'4px'};">${val}</div></div>`;
   return `
-    <button onclick="App.closeClient()" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid #ddd7cb;background:#fff;border-radius:10px;font:600 12.5px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;margin-bottom:16px;">← All clients</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px;flex-wrap:wrap;">
+      <button onclick="App.closeClient()" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid #ddd7cb;background:#fff;border-radius:10px;font:600 12.5px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">← All clients</button>
+      <button onclick="App.openEditClient(${idx})" style="padding:8px 14px;border:1px solid #ddd7cb;background:#fff;border-radius:10px;font:600 12.5px 'Instrument Sans',sans-serif;color:#3f5340;cursor:pointer;">Edit client</button>
+    </div>
     <div style="display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start;">
       <div style="display:flex;flex-direction:column;gap:16px;">
         <div style="${CARD}padding:22px;text-align:center;">
@@ -563,12 +667,12 @@ function viewClientProfile(c){
           <div style="margin-top:8px;"><span style="${tierBadge(c.tier)}">${esc(c.tier)} member</span></div>
           <div style="border-top:1px solid #f0ede6;margin-top:16px;padding-top:14px;display:flex;flex-direction:column;gap:9px;text-align:left;">
             <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Phone</span><span style="color:#2a2824;">${esc(c.phone)}</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Email</span><span style="color:#2a2824;">${esc(c.email)}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Email</span><span style="color:#2a2824;">${esc(c.email||'—')}</span></div>
             <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Client since</span><span style="color:#2a2824;">${esc(c.joined)}</span></div>
             <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#9a9488;">Favourite</span><span style="color:#2a2824;">${esc(c.fav)}</span></div>
           </div>
           <div style="display:flex;gap:8px;margin-top:16px;">
-            <button onclick="App.openBooking()" style="flex:1;padding:10px;border:none;background:#3f5340;border-radius:10px;font:600 13px 'Instrument Sans',sans-serif;color:#fff;cursor:pointer;">Book</button>
+            <button onclick="App.openBooking(${idx})" style="flex:1;padding:10px;border:none;background:#3f5340;border-radius:10px;font:600 13px 'Instrument Sans',sans-serif;color:#fff;cursor:pointer;">Book</button>
             <button style="flex:1;padding:10px;border:1px solid #ddd7cb;background:#fff;border-radius:10px;font:600 13px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">Message</button>
           </div>
         </div>
@@ -591,9 +695,7 @@ function viewClientProfile(c){
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
           ${statCard('Total visits', c.visits)}${statCard('Lifetime spend', esc(fmt(c.spend)), 24)}${statCard('Points', c.points)}
         </div>
-        <div style="${CARD}padding:20px;">
-          <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Upcoming appointments</div>${upcoming}
-        </div>
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Upcoming appointments</div>${upcoming}</div>
         <div style="${CARD}padding:8px 20px 16px;">
           <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">Service history</div>
           <table style="width:100%;border-collapse:collapse;">
@@ -614,10 +716,43 @@ function viewClientProfile(c){
     </div>`;
 }
 
+/* -- Client add/edit form modal -- */
+function clientFormModal(){
+  if (!S.clientForm) return '';
+  const editing = S.clientForm.editIndex !== null;
+  const c = editing ? DB.clients[S.clientForm.editIndex] : { name:'',phone:'',email:'',tier:'New',fav:'',prefs:[],allergies:'',notes:'' };
+  const tierOpts = TIERS.map(t => `<option value="${t}" ${c.tier===t?'selected':''}>${t}</option>`).join('');
+  const field = (id, label, val, ph='') => `<div><label class="lbl" for="${id}">${label}</label><input id="${id}" class="fld" value="${esc(val)}" placeholder="${esc(ph)}"></div>`;
+  return `
+    <div onclick="App.closeClientForm()" style="position:fixed;inset:0;background:rgba(30,28,24,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;">
+      <form onsubmit="return App.saveClient(event)" onclick="event.stopPropagation()" style="width:520px;max-width:100%;max-height:90vh;background:#faf8f4;border-radius:20px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 30px 70px rgba(30,28,24,.32);">
+        <div style="padding:20px 24px;border-bottom:1px solid #eae4d7;display:flex;align-items:center;justify-content:space-between;">
+          <div class="serif" style="font-size:21px;color:#26302a;">${editing ? 'Edit Client' : 'Add Client'}</div>
+          <button type="button" onclick="App.closeClientForm()" style="width:30px;height:30px;border:none;background:#f0ede6;border-radius:8px;color:#6b665d;font-size:16px;cursor:pointer;">✕</button>
+        </div>
+        <div style="padding:22px 24px;overflow:auto;flex:1;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          ${field('cfName','Full name', c.name, 'e.g. Aisha Kembabazi')}
+          ${field('cfPhone','Phone', c.phone, '+256 7xx xxx xxx')}
+          ${field('cfEmail','Email', c.email, 'name@email.com')}
+          <div><label class="lbl" for="cfTier">Loyalty tier</label><select id="cfTier" class="fld">${tierOpts}</select></div>
+          ${field('cfFav','Favourite therapist', c.fav==='—'?'':c.fav, 'e.g. Nanono Desire')}
+          <div style="grid-column:1 / -1;">${field('cfPrefs','Preferences (comma separated)', (c.prefs||[]).join(', '), 'Medium pressure, Lavender oil')}</div>
+          <div style="grid-column:1 / -1;">${field('cfAllergies','Allergies / notes', c.allergies==='None on file'?'':c.allergies, 'None on file')}</div>
+          <div style="grid-column:1 / -1;"><label class="lbl" for="cfNotes">Staff notes</label><textarea id="cfNotes" class="fld" rows="2" style="resize:vertical;">${esc(c.notes==='—'?'':c.notes)}</textarea></div>
+          ${S.formError ? `<div style="grid-column:1 / -1;font-size:12.5px;color:#b0492a;background:#fbe7e2;border:1px solid #f0d3c8;border-radius:10px;padding:9px 12px;">${esc(S.formError)}</div>` : ''}
+        </div>
+        <div style="padding:16px 24px;border-top:1px solid #eae4d7;display:flex;justify-content:flex-end;gap:12px;background:#f4f1ea;">
+          <button type="button" onclick="App.closeClientForm()" style="padding:11px 20px;border:1px solid #ddd7cb;background:#fff;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">Cancel</button>
+          <button type="submit" style="padding:11px 22px;border:none;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;background:#3f5340;color:#fff;">${editing ? 'Save changes' : 'Add client'}</button>
+        </div>
+      </form>
+    </div>`;
+}
+
 /* -- Billing -- */
 function viewBilling(){
   const cols = SALES_COLS.map(c => `<th style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:8px 6px;text-align:left;">${esc(c)}</th>`).join('');
-  const rows = SALES.map(s => `
+  const rows = salesLive().map(s => `
     <tr style="border-top:1px solid #f0ede6;">
       <td style="padding:10px 6px;font-size:13px;color:#2a2824;font-weight:500;">${esc(s.guest)}</td>
       <td style="padding:10px 6px;font-size:12.5px;color:#6b665d;">${esc(s.treatment)}</td>
@@ -640,13 +775,11 @@ function viewBilling(){
         <table style="width:100%;border-collapse:collapse;min-width:660px;"><thead><tr>${cols}</tr></thead><tbody>${rows}</tbody></table>
       </div>
       <div style="display:flex;flex-direction:column;gap:16px;">
-        <div style="${CARD}padding:20px;">
-          <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:14px;">Payment Methods</div>${pays}
-        </div>
+        <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:14px;">Payment Methods</div>${pays}</div>
         <div style="background:#26302a;border-radius:16px;padding:20px;color:#e9ede6;">
           <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#9fb09b;">Collected today</div>
-          <div class="serif" style="font-weight:600;font-size:34px;margin-top:6px;">${CUR} 4,240,000</div>
-          <div style="font-size:12.5px;color:#9fb09b;margin-top:8px;">42 receipts · 6 pending invoices</div>
+          <div class="serif" style="font-weight:600;font-size:34px;margin-top:6px;">${esc(fmt(revenueTotal()))}</div>
+          <div style="font-size:12.5px;color:#9fb09b;margin-top:8px;">${receiptsCount()} receipts · 6 pending invoices</div>
         </div>
       </div>
     </div>`;
@@ -664,8 +797,7 @@ function viewInventory(){
   const th = (t) => `<th style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#9a9488;font-weight:600;padding:8px 6px;text-align:left;">${t}</th>`;
   const equip = EQUIPMENT.map(e => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f0ede6;">
-      <span style="font-size:13px;color:#2a2824;">${esc(e.name)}</span>
-      <span style="font-size:12.5px;color:#6b665d;">${e.count} · <span style="color:${e.color};">${esc(e.cond)}</span></span>
+      <span style="font-size:13px;color:#2a2824;">${esc(e.name)}</span><span style="font-size:12.5px;color:#6b665d;">${e.count} · <span style="color:${e.color};">${esc(e.cond)}</span></span>
     </div>`).join('');
   return `
     <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:16px;align-items:start;">
@@ -673,9 +805,7 @@ function viewInventory(){
         <div style="padding:14px 0;font-weight:600;font-size:15px;color:#26302a;">Product Stock</div>
         <table style="width:100%;border-collapse:collapse;"><thead><tr>${th('Product')}${th('Category')}${th('Stock')}${th('Status')}</tr></thead><tbody>${rows}</tbody></table>
       </div>
-      <div style="${CARD}padding:20px;">
-        <div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Equipment &amp; Linen</div>${equip}
-      </div>
+      <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:15px;color:#26302a;margin-bottom:12px;">Equipment &amp; Linen</div>${equip}</div>
     </div>`;
 }
 
@@ -702,10 +832,7 @@ function viewStaff(){
           <table style="width:100%;border-collapse:collapse;"><tbody>${staff}</tbody></table>
         </div>
         <div style="display:flex;flex-direction:column;gap:16px;">
-          <div style="${CARD}padding:20px;">
-            <div style="font-weight:600;font-size:14px;color:#26302a;margin-bottom:10px;">Rooms · 1st Floor</div>
-            <div style="display:flex;flex-wrap:wrap;gap:7px;">${ROOMS1.map(roomChip).join('')}</div>
-          </div>
+          <div style="${CARD}padding:20px;"><div style="font-weight:600;font-size:14px;color:#26302a;margin-bottom:10px;">Rooms · 1st Floor</div><div style="display:flex;flex-wrap:wrap;gap:7px;">${ROOMS1.map(roomChip).join('')}</div></div>
           <div style="${CARD}padding:20px;">
             <div style="font-weight:600;font-size:14px;color:#26302a;margin-bottom:10px;">Rooms · 2nd Floor</div>
             <div style="display:flex;flex-wrap:wrap;gap:7px;">${ROOMS2.map(roomChip).join('')}</div>
@@ -789,10 +916,7 @@ function viewReports(){
 /* -- Gym -- */
 function viewGym(){
   const kpis = GYM_KPIS.map(k => `
-    <div style="${CARD}padding:18px;">
-      <div style="font-size:12px;color:#9a9488;text-transform:uppercase;letter-spacing:.8px;">${esc(k.label)}</div>
-      <div class="serif" style="font-weight:600;font-size:30px;color:#26302a;margin-top:6px;">${esc(k.value)}</div>
-    </div>`).join('');
+    <div style="${CARD}padding:18px;"><div style="font-size:12px;color:#9a9488;text-transform:uppercase;letter-spacing:.8px;">${esc(k.label)}</div><div class="serif" style="font-weight:600;font-size:30px;color:#26302a;margin-top:6px;">${esc(k.value)}</div></div>`).join('');
   const classes = GYM_CLASSES.map(c => `
     <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid #f0ede6;">
       <div style="font-size:13px;font-weight:600;color:#3f5340;width:64px;">${esc(c.time)}</div>
@@ -814,6 +938,7 @@ function viewGym(){
 }
 
 function moduleBody(){
+  if (!allowed(S.activeModule)) S.activeModule = 'dashboard';
   switch (S.activeModule){
     case 'dashboard': return viewDashboard();
     case 'appointments': return viewAppointments();
@@ -828,15 +953,11 @@ function moduleBody(){
     default: return viewDashboard();
   }
 }
-
 function desktop(){
   return `
     <div style="width:100%;flex:1;display:flex;background:#f4f1ea;">
       ${sidebar()}
-      <div style="flex:1;min-width:0;padding:26px 32px 60px;overflow:auto;">
-        ${moduleHeader()}
-        ${moduleBody()}
-      </div>
+      <div style="flex:1;min-width:0;padding:26px 32px 60px;overflow:auto;">${moduleHeader()}${moduleBody()}</div>
     </div>`;
 }
 
@@ -851,13 +972,10 @@ function bookingStepper(){
     return `<div style="display:flex;align-items:center;gap:8px;"><div style="${numStyle}">${done?'✓':n}</div><div style="${labelStyle}">${esc(label)}</div></div>${conn}`;
   }).join('');
 }
-
 function bookingStepBody(){
   if (S.bkStep === 1){
     const opts = MENU.map((mi, i) => `
-      <button onclick="App.pickService(${i})" style="${optStyle(S.bkService===i)}">
-        <span>${esc(mi.name)}</span><span style="color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(mi.price)}</span>
-      </button>`).join('');
+      <button onclick="App.pickService(${i})" style="${optStyle(S.bkService===i)}"><span>${esc(mi.name)}</span><span style="color:#7a6f57;font-weight:600;white-space:nowrap;">${esc(mi.price)}</span></button>`).join('');
     return `<div style="display:flex;flex-direction:column;gap:9px;">${opts}</div>`;
   }
   if (S.bkStep === 2){
@@ -886,26 +1004,18 @@ function bookingStepBody(){
       <div style="display:flex;flex-wrap:wrap;gap:8px;">${rooms}</div>`;
   }
   if (S.bkStep === 4){
-    const inp = "width:100%;padding:12px 14px;border:1px solid #e2ddd3;border-radius:11px;font:400 14px 'Instrument Sans',sans-serif;color:#2a2824;background:#fff;outline:none;";
     return `
       <div style="display:flex;flex-direction:column;gap:16px;">
-        <div>
-          <label style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;display:block;margin-bottom:7px;">Client name</label>
-          <input id="bkClient" value="${esc(S.bkClient)}" oninput="App.setField('bkClient', this.value, 'bkClient')" placeholder="e.g. Aisha Kembabazi" style="${inp}">
-        </div>
-        <div>
-          <label style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;display:block;margin-bottom:7px;">Phone number</label>
-          <input id="bkPhone" value="${esc(S.bkPhone)}" oninput="App.setField('bkPhone', this.value, 'bkPhone')" placeholder="+256 7xx xxx xxx" style="${inp}">
-        </div>
+        <div><label class="lbl" for="bkClient">Client name</label>
+          <input id="bkClient" class="fld" value="${esc(S.bkClient)}" oninput="App.setField('bkClient', this.value, 'bkClient')" placeholder="e.g. Aisha Kembabazi"></div>
+        <div><label class="lbl" for="bkPhone">Phone number</label>
+          <input id="bkPhone" class="fld" value="${esc(S.bkPhone)}" oninput="App.setField('bkPhone', this.value, 'bkPhone')" placeholder="+256 7xx xxx xxx"></div>
         <div style="display:flex;align-items:center;justify-content:space-between;background:#f7f5f0;border:1px solid #eae4d7;border-radius:12px;padding:14px 16px;">
           <div><div style="font-size:13.5px;color:#26302a;font-weight:500;">Send SMS reminder</div><div style="font-size:12px;color:#9a9488;">24 hours before the appointment</div></div>
-          <div onclick="App.toggleReminder()" style="width:44px;height:24px;border-radius:14px;padding:2px;cursor:pointer;display:flex;${S.bkReminder?'background:#3f5340;justify-content:flex-end;':'background:#d8d3c8;justify-content:flex-start;'}">
-            <div style="width:20px;height:20px;border-radius:50%;background:#fff;"></div>
-          </div>
+          <div onclick="App.toggleReminder()" style="width:44px;height:24px;border-radius:14px;padding:2px;cursor:pointer;display:flex;${S.bkReminder?'background:#3f5340;justify-content:flex-end;':'background:#d8d3c8;justify-content:flex-start;'}"><div style="width:20px;height:20px;border-radius:50%;background:#fff;"></div></div>
         </div>
       </div>`;
   }
-  // step 5 — confirm
   const service = S.bkService!==null ? MENU[S.bkService].name : '—';
   const price = S.bkService!==null ? MENU[S.bkService].price : '—';
   const row = (l, v) => `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f0ede6;font-size:13.5px;"><span style="color:#9a9488;">${l}</span><span style="color:#26302a;font-weight:500;text-align:right;">${esc(v)}</span></div>`;
@@ -915,34 +1025,25 @@ function bookingStepBody(){
         <div style="width:64px;height:64px;border-radius:50%;background:#eef2ec;color:#3f5340;display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 16px;">✓</div>
         <div class="serif" style="font-size:24px;color:#26302a;">Booking Confirmed</div>
         <div style="font-size:13.5px;color:#8f897e;margin-top:8px;line-height:1.5;">${esc(service)} for ${esc(S.bkClient||'the client')}<br>${esc(BK_DAYS[S.bkDay||0])} March 2026 · ${esc(S.bkTime||'—')} · ${esc(S.bkRoom||'—')}</div>
-        <div style="font-size:12.5px;color:#6a8168;margin-top:10px;">${S.bkReminder?'An SMS reminder will be sent 24h before.':'No reminder scheduled.'}</div>
+        <div style="font-size:12.5px;color:#6a8168;margin-top:10px;">Added to Today's Schedule &amp; Billing.${S.bkReminder?' An SMS reminder will be sent 24h before.':''}</div>
       </div>`;
   }
   return `
     <div style="${CARD}padding:6px 18px;">
-      ${row('Service', service)}
-      ${row('Price', price)}
-      ${row('Date', BK_DAYS[S.bkDay||0] + ' March 2026')}
-      ${row('Time', S.bkTime || '—')}
-      ${row('Therapist', S.bkTherapist || '—')}
-      ${row('Room', S.bkRoom || '—')}
-      ${row('Client', S.bkClient || '—')}
-      ${row('Phone', S.bkPhone || '—')}
-      ${row('Branch', 'The Calabash ' + S.branch)}
+      ${row('Service', service)}${row('Price', price)}${row('Date', BK_DAYS[S.bkDay||0] + ' March 2026')}${row('Time', S.bkTime || '—')}
+      ${row('Therapist', S.bkTherapist || '—')}${row('Room', S.bkRoom || '—')}${row('Client', S.bkClient || '—')}${row('Phone', S.bkPhone || '—')}${row('Branch', 'The Calabash ' + S.branch)}
     </div>
     <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#9a9488;margin:18px 0 9px;">Payment method</div>
     <div style="display:flex;flex-direction:column;gap:9px;">
       ${BK_PAYMENTS.map(p => `<button onclick="App.pickPayment('${esc(p)}')" style="${optStyle(S.bkPayment===p)}"><span>${esc(p)}</span></button>`).join('')}
     </div>`;
 }
-
 function bookingModal(){
   if (!S.bkOpen) return '';
   const ok = App.bkCanNext();
   const footer = S.bkDone
     ? `<button onclick="App.closeBooking()" style="${bkNextBtnStyle(true)}">Done</button>`
-    : `
-      ${S.bkStep>1 ? `<button onclick="App.bkBack()" style="padding:11px 20px;border:1px solid #ddd7cb;background:#fff;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">Back</button>` : '<div></div>'}
+    : `${S.bkStep>1 ? `<button onclick="App.bkBack()" style="padding:11px 20px;border:1px solid #ddd7cb;background:#fff;border-radius:11px;font:600 14px 'Instrument Sans',sans-serif;color:#4a4740;cursor:pointer;">Back</button>` : '<div></div>'}
       <button id="bkNextBtn" onclick="App.bkNext()" style="${bkNextBtnStyle(ok)}">${S.bkStep===5?'Confirm Booking':'Continue'}</button>`;
   return `
     <div onclick="App.closeBooking()" style="position:fixed;inset:0;background:rgba(30,28,24,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;">
@@ -960,7 +1061,8 @@ function bookingModal(){
 
 /* ----------------------------- MOBILE -------------------------------- */
 function mobileHome(){
-  const appts = TODAY.slice(0,4).map(a => `
+  const first = (S.session.name||'').split(' ')[0];
+  const appts = scheduleLive().slice(0,4).map(a => `
     <div style="${CARD}padding:12px 14px;margin-bottom:9px;">
       <div style="display:flex;align-items:center;gap:12px;">
         <div style="font-size:13px;font-weight:600;color:#3f5340;">${esc(a.time)}</div>
@@ -969,11 +1071,11 @@ function mobileHome(){
       </div>
     </div>`).join('');
   return `
-    <div class="serif" style="font-size:26px;color:#26302a;margin:6px 0 2px;">Good morning, Lucy</div>
+    <div class="serif" style="font-size:26px;color:#26302a;margin:6px 0 2px;">Good morning, ${esc(first)}</div>
     <div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">Friday, 21 March · Morning shift</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
-      <div style="background:#26302a;color:#fff;border-radius:16px;padding:16px;"><div style="font-size:11px;color:#9fb09b;text-transform:uppercase;letter-spacing:.5px;">Revenue</div><div class="serif" style="font-size:26px;margin-top:4px;">4.24M</div></div>
-      <div style="${CARD}padding:16px;"><div style="font-size:11px;color:#9a9488;text-transform:uppercase;letter-spacing:.5px;">Bookings</div><div class="serif" style="font-size:26px;color:#26302a;margin-top:4px;">38</div></div>
+      <div style="background:#26302a;color:#fff;border-radius:16px;padding:16px;"><div style="font-size:11px;color:#9fb09b;text-transform:uppercase;letter-spacing:.5px;">Revenue</div><div class="serif" style="font-size:26px;margin-top:4px;">${(revenueTotal()/1e6).toFixed(2)}M</div></div>
+      <div style="${CARD}padding:16px;"><div style="font-size:11px;color:#9a9488;text-transform:uppercase;letter-spacing:.5px;">Bookings</div><div class="serif" style="font-size:26px;color:#26302a;margin-top:4px;">${apptCount()}</div></div>
     </div>
     <div style="font-size:13px;font-weight:600;color:#26302a;margin-bottom:8px;">Next appointments</div>${appts}`;
 }
@@ -985,8 +1087,7 @@ function mobileBook(){
   return `
     <div class="serif" style="font-size:24px;color:#26302a;margin:6px 0 4px;">Book a Service</div>
     <div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">Tap a service to start a booking</div>
-    <button onclick="App.openBooking()" style="width:100%;padding:13px;border:none;background:#3f5340;color:#fff;border-radius:13px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;margin-bottom:16px;">+ New Booking</button>
-    ${svcs}`;
+    <button onclick="App.openBooking()" style="width:100%;padding:13px;border:none;background:#3f5340;color:#fff;border-radius:13px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;margin-bottom:16px;">+ New Booking</button>${svcs}`;
 }
 function mobileStaff(){
   const shift = ON_SHIFT.map(s => `
@@ -995,9 +1096,7 @@ function mobileStaff(){
       <div style="flex:1;"><div style="font-size:13px;color:#2a2824;">${esc(s.name)}</div><div style="font-size:11.5px;color:#9a9488;">${esc(s.role)}</div></div>
       <div style="font-size:11.5px;color:#6a8168;">${esc(s.shift)}</div>
     </div>`).join('');
-  return `
-    <div class="serif" style="font-size:24px;color:#26302a;margin:6px 0 4px;">On Shift Now</div>
-    <div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">${RAW_STAFF.length} team members · Wampewo</div>${shift}`;
+  return `<div class="serif" style="font-size:24px;color:#26302a;margin:6px 0 4px;">On Shift Now</div><div style="font-size:12.5px;color:#9a9488;margin-bottom:16px;">${RAW_STAFF.length} team members · Wampewo</div>${shift}`;
 }
 function mobile(){
   const screen = S.mScreen==='home' ? mobileHome() : S.mScreen==='book' ? mobileBook() : mobileStaff();
@@ -1006,13 +1105,9 @@ function mobile(){
     <div style="width:100%;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:34px 0 60px;background:#e7e3da;">
       <div style="width:390px;max-width:100%;height:800px;background:#20261f;border-radius:44px;padding:12px;box-shadow:0 30px 70px rgba(30,28,24,.28);">
         <div style="width:100%;height:100%;background:#f4f1ea;border-radius:33px;overflow:hidden;position:relative;display:flex;flex-direction:column;">
-          <div style="height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font-size:12.5px;font-weight:600;color:#26302a;flex-shrink:0;">
-            <span>9:41</span><span>Wampewo Spa</span><span>100%</span>
-          </div>
+          <div style="height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font-size:12.5px;font-weight:600;color:#26302a;flex-shrink:0;"><span>9:41</span><span>Wampewo Spa</span><span>100%</span></div>
           <div style="flex:1;overflow:auto;padding:6px 18px 20px;">${screen}</div>
-          <div style="flex-shrink:0;background:#fbfaf7;border-top:1px solid #eae4d7;padding:8px 14px 14px;display:flex;gap:6px;">
-            ${tab('home','Home','⌂')}${tab('book','Book','＋')}${tab('staff','Staff','☰')}
-          </div>
+          <div style="flex-shrink:0;background:#fbfaf7;border-top:1px solid #eae4d7;padding:8px 14px 14px;display:flex;gap:6px;">${tab('home','Home','⌂')}${tab('book','Book','＋')}${tab('staff','Staff','☰')}</div>
         </div>
       </div>
     </div>`;
@@ -1020,18 +1115,19 @@ function mobile(){
 
 /* ------------------------------ RENDER ------------------------------- */
 function render(){
-  const body = S.device==='desktop' ? desktop() : mobile();
-  document.getElementById('root').innerHTML = `
-    <div style="width:100%;min-height:100vh;background:#e7e3da;display:flex;flex-direction:column;align-items:center;padding:0;">
-      ${topBar()}
-      ${body}
-    </div>
-    ${bookingModal()}`;
-  // restore focus for booking text inputs after re-render
-  if (S._focus){
-    const el = document.getElementById(S._focus);
-    if (el){ el.focus(); const v = el.value; el.value = ''; el.value = v; }
+  const root = document.getElementById('root');
+  if (!S.session){
+    root.innerHTML = loginView();
+    const el = document.getElementById('loginUser'); if (el) el.focus();
+    return;
   }
+  const body = S.device==='desktop' ? desktop() : mobile();
+  root.innerHTML = `
+    <div style="width:100%;min-height:100vh;background:#e7e3da;display:flex;flex-direction:column;align-items:center;padding:0;">
+      ${topBar()}${body}
+    </div>
+    ${bookingModal()}${clientFormModal()}`;
+  if (S._focus){ const el = document.getElementById(S._focus); if (el){ el.focus(); const v = el.value; el.value=''; el.value=v; } S._focus = null; }
 }
 
 render();
